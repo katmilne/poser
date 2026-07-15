@@ -293,7 +293,7 @@ private struct PhotoPocket: View {
                         .onEnded { value in
                             let isTap = abs(value.translation.width) < 10 && abs(value.translation.height) < 10
                             if isTap || pullY < -90 || value.predictedEndTranslation.height < -140 {
-                                pullY = 0
+                                withAnimation(.poserGlide) { pullY = 0 }
                                 onOpen()
                             } else {
                                 withAnimation(.poserGlide) { pullY = 0 }
