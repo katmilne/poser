@@ -14,6 +14,11 @@ struct StickerMakerView: View {
     @State private var previewImage: UIImage?
     @State private var isCutting = false
     @State private var errorMessage: String?
+    @State private var previewBoxSize: CGSize = .zero
+    @State private var zoomScale: CGFloat = 1
+    @State private var panOffset: CGSize = .zero
+    @State private var zoomGestureStart: CGFloat = 1
+    @State private var panGestureStart: CGSize = .zero
 
     var body: some View {
         ZStack {
@@ -31,9 +36,48 @@ struct StickerMakerView: View {
                     RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
                         .fill(Theme.Colors.mist)
                     if let previewImage {
-                        Image(uiImage: previewImage)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
+                        GeometryReader { proxy in
+                            Image(uiImage: previewImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                                .scaleEffect(zoomScale)
+                                .offset(panOffset)
+                                .frame(width: proxy.size.width, height: proxy.size.height)
+                                .clipped()
+                                .contentShape(.rect)
+                                .gesture(
+                                    DragGesture()
+                                        .onChanged { value in
+                                            let bounds = panBounds(boxSize: proxy.size, imageSize: previewImage.size)
+                                            panOffset = CGSize(
+                                                width: min(bounds.width, max(-bounds.width, panGestureStart.width + value.translation.width)),
+                                                height: min(bounds.height, max(-bounds.height, panGestureStart.height + value.translation.height))
+                                            )
+                                        }
+                                        .onEnded { _ in panGestureStart = panOffset }
+                                )
+                                .simultaneousGesture(
+                                    MagnifyGesture()
+                                        .onChanged { value in
+                                            zoomScale = min(4, max(1, zoomGestureStart * value.magnification))
+                                            let bounds = panBounds(boxSize: proxy.size, imageSize: previewImage.size)
+                                            panOffset = CGSize(
+                                                width: min(bounds.width, max(-bounds.width, panOffset.width)),
+                                                height: min(bounds.height, max(-bounds.height, panOffset.height))
+                                            )
+                                        }
+                                        .onEnded { _ in
+                                            zoomGestureStart = zoomScale
+                                            panGestureStart = panOffset
+                                        }
+                                )
+                                .onTapGesture(count: 2) {
+                                    withAnimation(.poserSettle) { resetImageTransform() }
+                                }
+                                .onAppear { previewBoxSize = proxy.size }
+                                .onChange(of: proxy.size) { _, newValue in previewBoxSize = newValue }
+                        }
                     } else if camera.authorizationStatus == .authorized,
                               camera.configurationErrorMessage == nil {
                         CameraPreview(session: camera.session)
@@ -51,6 +95,13 @@ struct StickerMakerView: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
                 .padding(.horizontal, 30)
 
+                if previewImage != nil {
+                    Text("DRAG TO POSITION · PINCH TO ZOOM")
+                        .font(.system(size: 10, weight: .black, design: .monospaced))
+                        .tracking(1.1)
+                        .foregroundStyle(Theme.Colors.textDim)
+                }
+
                 HStack(spacing: 12) {
                     GlassTextButton(
                         title: sourceData == nil ? "TAKE PHOTO" : "RETAKE",
@@ -62,6 +113,7 @@ struct StickerMakerView: View {
                             sourceData = nil
                             previewImage = nil
                             pickerItem = nil
+                            resetImageTransform()
                         }
                     }
 
@@ -100,6 +152,7 @@ struct StickerMakerView: View {
             Task {
                 sourceData = try? await pickerItem?.loadTransferable(type: Data.self)
                 if let sourceData { previewImage = UIImage(data: sourceData) }
+                resetImageTransform()
             }
         }
         .task { await camera.requestAccessAndStart() }
@@ -120,19 +173,70 @@ struct StickerMakerView: View {
             let data = try await camera.capturePhoto()
             sourceData = data
             previewImage = UIImage(data: data)
+            resetImageTransform()
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
+    private func resetImageTransform() {
+        zoomScale = 1
+        panOffset = .zero
+        zoomGestureStart = 1
+        panGestureStart = .zero
+    }
+
+    private func panBounds(boxSize: CGSize, imageSize: CGSize) -> CGSize {
+        guard boxSize.width > 0, boxSize.height > 0, imageSize.width > 0, imageSize.height > 0 else { return .zero }
+        let fillScale = max(boxSize.width / imageSize.width, boxSize.height / imageSize.height) * zoomScale
+        let displayed = CGSize(width: imageSize.width * fillScale, height: imageSize.height * fillScale)
+        return CGSize(
+            width: max(0, (displayed.width - boxSize.width) / 2),
+            height: max(0, (displayed.height - boxSize.height) / 2)
+        )
+    }
+
+    /// Bakes the on-screen pan/zoom into the source pixels before cutout, since
+    /// Vision segments whatever crop is handed to it.
+    private func croppedSourceData() -> Data? {
+        guard let sourceData, let previewImage else { return sourceData }
+        guard zoomScale > 1.001 || panOffset != .zero else { return sourceData }
+        let imageSize = previewImage.size
+        let boxSize = previewBoxSize
+        guard imageSize.width > 0, imageSize.height > 0, boxSize.width > 0, boxSize.height > 0 else { return sourceData }
+
+        let fillScale = max(boxSize.width / imageSize.width, boxSize.height / imageSize.height) * zoomScale
+        let displayedSize = CGSize(width: imageSize.width * fillScale, height: imageSize.height * fillScale)
+        let displayedOrigin = CGPoint(
+            x: (boxSize.width - displayedSize.width) / 2 + panOffset.width,
+            y: (boxSize.height - displayedSize.height) / 2 + panOffset.height
+        )
+        let cropRect = CGRect(
+            x: -displayedOrigin.x / fillScale,
+            y: -displayedOrigin.y / fillScale,
+            width: boxSize.width / fillScale,
+            height: boxSize.height / fillScale
+        ).intersection(CGRect(origin: .zero, size: imageSize))
+        guard !cropRect.isEmpty else { return sourceData }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: cropRect.size, format: format)
+        let cropped = renderer.image { _ in
+            previewImage.draw(at: CGPoint(x: -cropRect.origin.x, y: -cropRect.origin.y))
+        }
+        return cropped.jpegData(compressionQuality: 0.95) ?? sourceData
+    }
+
     @MainActor
     private func cutOut() async {
         guard let sourceData else { return }
+        let dataToCut = croppedSourceData() ?? sourceData
         isCutting = true
         defer { isCutting = false }
         do {
-            let stored = try await SubjectCutoutService.shared.createSticker(from: sourceData)
+            let stored = try await SubjectCutoutService.shared.createSticker(from: dataToCut)
             let record = CustomStickerRecord(
                 id: stored.id,
                 fileName: stored.fileName,
