@@ -20,80 +20,83 @@ struct GalleryView: View {
     }
 
     var body: some View {
-        ZStack {
-            albumBackground
-            VStack(spacing: 14) {
-                header
-                    .padding(.horizontal, 16)
-                    .padding(.top, 8)
+        GeometryReader { proxy in
+            ZStack {
+                albumBackground
+                    .frame(width: proxy.size.width, height: proxy.size.height)
+                VStack(spacing: 14) {
+                    header
+                        .padding(.horizontal, 16)
+                        .padding(.top, 8)
 
-                if pages.isEmpty {
-                    emptyAlbum
-                } else {
-                    TabView(selection: $page) {
-                        ForEach(Array(pages.enumerated()), id: \.offset) { pageIndex, pageShots in
-                            AlbumPage(
-                                shots: pageShots,
-                                namespace: albumNamespace,
-                                activeLightboxID: lightboxShot?.id,
-                                animateIn: page == pageIndex
-                            ) { shot in
-                                openedShotID = shot.id
-                                withAnimation(.poserGlide) { lightboxShot = shot }
-                            } onDelete: { shot in
-                                confirmsDelete = shot
+                    if pages.isEmpty {
+                        emptyAlbum
+                    } else {
+                        TabView(selection: $page) {
+                            ForEach(Array(pages.enumerated()), id: \.offset) { pageIndex, pageShots in
+                                AlbumPage(
+                                    shots: pageShots,
+                                    namespace: albumNamespace,
+                                    activeLightboxID: lightboxShot?.id,
+                                    animateIn: page == pageIndex
+                                ) { shot in
+                                    openedShotID = shot.id
+                                    withAnimation(.poserGlide) { lightboxShot = shot }
+                                } onDelete: { shot in
+                                    confirmsDelete = shot
+                                }
+                                .padding(.horizontal, 20)
+                                .tag(pageIndex)
                             }
-                            .padding(.horizontal, 20)
-                            .tag(pageIndex)
                         }
+                        .tabViewStyle(.page(indexDisplayMode: .never))
+                        .sensoryFeedback(.impact(weight: .heavy), trigger: page)
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                    .sensoryFeedback(.impact(weight: .heavy), trigger: page)
+
+                    Text(String(format: "%02d / %02d", min(page + 1, max(1, pages.count)), max(1, pages.count)))
+                        .font(.system(size: 12, weight: .black, design: .monospaced))
+                        .tracking(1.8)
+                        .foregroundStyle(Theme.Colors.denim)
+                        .padding(.bottom, 14)
                 }
 
-                Text(String(format: "%02d / %02d", min(page + 1, max(1, pages.count)), max(1, pages.count)))
-                    .font(.system(size: 12, weight: .black, design: .monospaced))
-                    .tracking(1.8)
-                    .foregroundStyle(Theme.Colors.denim)
-                    .padding(.bottom, 14)
+                if let shot = lightboxShot {
+                    AlbumLightbox(
+                        shots: shots,
+                        shot: shot,
+                        namespace: albumNamespace,
+                        returnsToPocket: openedShotID == shot.id,
+                        onChange: { lightboxShot = $0 },
+                        onClose: { closeLightbox() },
+                        onEdit: {
+                            lightboxShot = nil
+                            appState.showsGallery = false
+                            appState.editingShot = shot
+                        },
+                        onSave: { Task { await save(shot) } },
+                        onDelete: { confirmsDelete = shot },
+                        onUseGhost: { useGhost(from: shot) }
+                    )
+                    .zIndex(10)
+                }
             }
-
-            if let shot = lightboxShot {
-                AlbumLightbox(
-                    shots: shots,
-                    shot: shot,
-                    namespace: albumNamespace,
-                    returnsToPocket: openedShotID == shot.id,
-                    onChange: { lightboxShot = $0 },
-                    onClose: { closeLightbox() },
-                    onEdit: {
-                        lightboxShot = nil
-                        appState.showsGallery = false
-                        appState.editingShot = shot
-                    },
-                    onSave: { Task { await save(shot) } },
-                    onDelete: { confirmsDelete = shot },
-                    onUseGhost: { useGhost(from: shot) }
-                )
-                .zIndex(10)
+            .confirmationDialog("Delete this photo from POSER?", isPresented: Binding(
+                get: { confirmsDelete != nil },
+                set: { if !$0 { confirmsDelete = nil } }
+            )) {
+                Button("Delete from POSER", role: .destructive) {
+                    if let shot = confirmsDelete { delete(shot) }
+                }
+                Button("Cancel", role: .cancel) { }
             }
-        }
-        .confirmationDialog("Delete this photo from POSER?", isPresented: Binding(
-            get: { confirmsDelete != nil },
-            set: { if !$0 { confirmsDelete = nil } }
-        )) {
-            Button("Delete from POSER", role: .destructive) {
-                if let shot = confirmsDelete { delete(shot) }
+            .alert("Album", isPresented: Binding(
+                get: { saveMessage != nil },
+                set: { if !$0 { saveMessage = nil } }
+            )) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(saveMessage ?? "")
             }
-            Button("Cancel", role: .cancel) { }
-        }
-        .alert("Album", isPresented: Binding(
-            get: { saveMessage != nil },
-            set: { if !$0 { saveMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) { }
-        } message: {
-            Text(saveMessage ?? "")
         }
     }
 
