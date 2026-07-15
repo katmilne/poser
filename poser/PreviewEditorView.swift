@@ -436,9 +436,7 @@ private struct PlacedStickerView: View {
     let customURL: URL?
     let onSelect: () -> Void
     let onChange: (ShotSticker) -> Void
-    @State private var dragStart: CGSize = .zero
-    @State private var scaleStart: Double = 1
-    @State private var rotationStart: Double = 0
+    @State private var dragStart: CGPoint?
 
     var body: some View {
         let base = canvasSize.width * 0.22
@@ -459,10 +457,15 @@ private struct PlacedStickerView: View {
                 DragGesture()
                     .onChanged { value in
                         guard editable else { return }
+                        let start = dragStart ?? CGPoint(x: sticker.cx, y: sticker.cy)
+                        if dragStart == nil { dragStart = start }
                         var next = sticker
-                        next.cx = min(1, max(0, sticker.cx + value.translation.width / canvasSize.width))
-                        next.cy = min(1, max(0, sticker.cy + value.translation.height / canvasSize.height))
+                        next.cx = min(1, max(0, start.x + value.translation.width / canvasSize.width))
+                        next.cy = min(1, max(0, start.y + value.translation.height / canvasSize.height))
                         onChange(next)
+                    }
+                    .onEnded { _ in
+                        dragStart = nil
                     }
             )
             .simultaneousGesture(
@@ -541,8 +544,8 @@ private struct StickerGlyph: View {
         Image(systemName: name)
             .resizable()
             .scaledToFit()
-            .symbolRenderingMode(.palette)
-            .foregroundStyle(Theme.Colors.ink, color)
+            .foregroundStyle(.white)
+            .shadow(color: Theme.Colors.ink.opacity(0.35), radius: 2, y: 1)
             .padding(8)
     }
 
@@ -600,18 +603,38 @@ private struct DecorativeFrame: View {
     }
 
     private func frameSymbols(_ symbol: String, color: Color, size: CGSize) -> some View {
-        ZStack {
-            ForEach(0..<10, id: \.self) { index in
+        let count = 16
+        return ZStack {
+            ForEach(0..<count, id: \.self) { index in
                 Image(systemName: symbol)
-                    .font(.system(size: size.width * (index.isMultiple(of: 3) ? 0.10 : 0.07), weight: .bold))
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(Theme.Colors.ink, color)
-                    .position(
-                        x: index < 5 ? CGFloat(index) / 4 * size.width : (index.isMultiple(of: 2) ? 12 : size.width - 12),
-                        y: index < 5 ? 18 : CGFloat(index - 5) / 4 * size.height
-                    )
+                    .font(.system(size: size.width * 0.075, weight: .bold))
+                    .foregroundStyle(.white)
+                    .shadow(color: Theme.Colors.ink.opacity(0.35), radius: 2, y: 1)
+                    .position(borderPoint(index: index, count: count, size: size))
             }
         }
+    }
+
+    private func borderPoint(index: Int, count: Int, size: CGSize) -> CGPoint {
+        let inset: CGFloat = 20
+        let w = max(1, size.width - inset * 2)
+        let h = max(1, size.height - inset * 2)
+        let perimeter = 2 * (w + h)
+        var distance = perimeter * CGFloat(index) / CGFloat(count)
+
+        if distance < w {
+            return CGPoint(x: inset + distance, y: inset)
+        }
+        distance -= w
+        if distance < h {
+            return CGPoint(x: size.width - inset, y: inset + distance)
+        }
+        distance -= h
+        if distance < w {
+            return CGPoint(x: size.width - inset - distance, y: size.height - inset)
+        }
+        distance -= w
+        return CGPoint(x: inset, y: size.height - inset - distance)
     }
 }
 
