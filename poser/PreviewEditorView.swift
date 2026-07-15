@@ -320,6 +320,13 @@ struct PreviewEditorView: View {
         guard let sourceImage else { return nil }
         selectedStickerID = nil
         await Task.yield()
+        var customStickerImages: [String: UIImage] = [:]
+        for id in Set(stickers.compactMap(\.customStickerId)) {
+            guard let url = customStickerURLs[id] else { continue }
+            if let image = await LocalImageLoader.shared.image(at: url, maxPixel: 600) {
+                customStickerImages[id] = image
+            }
+        }
         let exportSize = CGSize(width: 1536, height: 2048)
         let renderer = ImageRenderer(content: CompositeCanvas(
             image: sourceImage,
@@ -328,6 +335,7 @@ struct PreviewEditorView: View {
             selectedStickerID: nil,
             editable: false,
             customStickerURLs: customStickerURLs,
+            customStickerImages: customStickerImages,
             onSelect: { _ in },
             onChange: { _ in }
         ).frame(width: exportSize.width, height: exportSize.height))
@@ -395,6 +403,7 @@ private struct CompositeCanvas: View {
     let selectedStickerID: String?
     let editable: Bool
     let customStickerURLs: [String: URL]
+    var customStickerImages: [String: UIImage] = [:]
     let onSelect: (String) -> Void
     let onChange: (ShotSticker) -> Void
 
@@ -416,6 +425,7 @@ private struct CompositeCanvas: View {
                         selected: selectedStickerID == sticker.key,
                         editable: editable,
                         customURL: sticker.customStickerId.flatMap { customStickerURLs[$0] },
+                        customImage: sticker.customStickerId.flatMap { customStickerImages[$0] },
                         onSelect: { onSelect(sticker.key) },
                         onChange: onChange
                     )
@@ -434,6 +444,7 @@ private struct PlacedStickerView: View {
     let selected: Bool
     let editable: Bool
     let customURL: URL?
+    var customImage: UIImage?
     let onSelect: () -> Void
     let onChange: (ShotSticker) -> Void
     @State private var dragStart: CGPoint?
@@ -442,7 +453,7 @@ private struct PlacedStickerView: View {
 
     var body: some View {
         let base = canvasSize.width * 0.22
-        StickerGlyph(id: sticker.stickerId, text: sticker.text, customURL: customURL)
+        StickerGlyph(id: sticker.stickerId, text: sticker.text, customURL: customURL, customImage: customImage)
             .frame(width: base, height: base)
             .scaleEffect(x: sticker.flipped ? -(sticker.scale ?? 1) : (sticker.scale ?? 1), y: sticker.scale ?? 1)
             .rotationEffect(.degrees(sticker.rotation ?? 0))
@@ -517,12 +528,17 @@ private struct StickerGlyph: View {
     let id: String
     var text: String?
     var customURL: URL?
+    var customImage: UIImage?
 
     var body: some View {
         ZStack {
             switch id {
             case "custom":
-                if let customURL {
+                if let customImage {
+                    Image(uiImage: customImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                } else if let customURL {
                     LocalFileImage(url: customURL, contentMode: .fit, maxPixel: 600)
                 }
             case "heart": symbol("heart.fill", Theme.Colors.hotPink)

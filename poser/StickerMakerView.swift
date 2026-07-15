@@ -54,9 +54,15 @@ struct StickerMakerView: View {
                 HStack(spacing: 12) {
                     GlassTextButton(
                         title: sourceData == nil ? "TAKE PHOTO" : "RETAKE",
-                        disabled: !camera.isReady
+                        disabled: sourceData == nil && !camera.isReady
                     ) {
-                        Task { await takePhoto() }
+                        if sourceData == nil {
+                            Task { await takePhoto() }
+                        } else {
+                            sourceData = nil
+                            previewImage = nil
+                            pickerItem = nil
+                        }
                     }
 
                     PhotosPicker(selection: $pickerItem, matching: .images) {
