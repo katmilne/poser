@@ -227,6 +227,7 @@ struct CameraView: View {
                                         appState.cycleGhost(overlay)
                                         try? modelContext.save()
                                     } onDelete: {
+                                        guard !overlay.isBuiltIn else { return }
                                         if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
                                         modelContext.delete(overlay)
                                         Task { await ImageStore.shared.deleteOverlay(overlay) }
@@ -494,7 +495,15 @@ private struct PoseThumbnail: View {
     @State private var confirmsDelete = false
 
     var body: some View {
-        Button(action: action) {
+        thumbnail
+            .buttonStyle(PressScaleButtonStyle())
+            .accessibilityLabel(selected ? "Selected pose" : "Pose")
+            .accessibilityHint("Tap to select, flip, then remove")
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        let button = Button(action: action) {
             LocalFileImage(
                 url: ImageStore.shared.overlayURL(overlay),
                 contentMode: .fit,
@@ -512,16 +521,20 @@ private struct PoseThumbnail: View {
                     )
             }
         }
-        .buttonStyle(PressScaleButtonStyle())
-        .contextMenu {
-            Button("Delete pose", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+
+        // Sample poses can't be deleted, so they get no context menu at all.
+        if overlay.isBuiltIn {
+            button
+        } else {
+            button
+                .contextMenu {
+                    Button("Delete pose", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                }
+                .confirmationDialog("Delete this pose from POSER?", isPresented: $confirmsDelete) {
+                    Button("Delete pose", role: .destructive, action: onDelete)
+                    Button("Cancel", role: .cancel) { }
+                }
         }
-        .confirmationDialog("Delete this pose from POSER?", isPresented: $confirmsDelete) {
-            Button("Delete pose", role: .destructive, action: onDelete)
-            Button("Cancel", role: .cancel) { }
-        }
-        .accessibilityLabel(selected ? "Selected pose" : "Pose")
-        .accessibilityHint("Tap to select, flip, then remove")
     }
 }
 

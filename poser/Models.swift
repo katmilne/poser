@@ -155,6 +155,10 @@ final class OverlayRecord {
         get { canvasAspectValue ?? 3.0 / 4.0 }
         set { canvasAspectValue = newValue }
     }
+
+    /// Sample poses shipped with the app use `builtin-` prefixed ids
+    /// (see `BundledPoseCatalog`). Only user-added poses may be deleted.
+    var isBuiltIn: Bool { id.hasPrefix("builtin-") }
 }
 
 @Model

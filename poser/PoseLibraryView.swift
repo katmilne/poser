@@ -52,6 +52,7 @@ struct PoseLibraryView: View {
                                     }
                                     try? modelContext.save()
                                 } onDelete: {
+                                    guard !overlay.isBuiltIn else { return }
                                     if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
                                     modelContext.delete(overlay)
                                     Task { await ImageStore.shared.deleteOverlay(overlay) }
@@ -264,7 +265,9 @@ private struct PoseLibraryTile: View {
                 )
                 Button("Edit tags", systemImage: "tag", action: onTag)
                 Button("Reframe pose", systemImage: "crop", action: onReframe)
-                Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                if !overlay.isBuiltIn {
+                    Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                }
             }
 
             Button(action: onFavorite) {
