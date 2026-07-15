@@ -18,6 +18,7 @@ struct CameraView: View {
     @State private var ghostScale: CGFloat = 1
     @State private var normalizedCaptureCrop = NormalizedCrop.full
     @State private var errorMessage: String?
+    @State private var referenceStripCollapsed = false
 
     private var favoriteOverlays: [OverlayRecord] {
         overlays.filter(\.isFavorite)
@@ -25,65 +26,40 @@ struct CameraView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let previewWidth = proxy.size.width
-                + proxy.safeAreaInsets.leading
-                + proxy.safeAreaInsets.trailing
-            let previewHeight = proxy.size.height
-                + proxy.safeAreaInsets.top
-                + proxy.safeAreaInsets.bottom
-            let previewCenter = CGPoint(
-                x: previewWidth / 2,
-                y: previewHeight / 2
-            )
-            let guideTop = max(68, proxy.safeAreaInsets.top + 9)
-            let guideBottom = proxy.size.height - 220
-            let availableGuideHeight = max(240, guideBottom - guideTop)
-            let guideWidth = min(
-                max(0, proxy.size.width - 56),
-                availableGuideHeight * Theme.viewportAspect
-            )
-            let guideHeight = guideWidth / Theme.viewportAspect
-            let guideRect = CGRect(
-                x: (proxy.size.width - guideWidth) / 2,
-                y: guideTop,
-                width: guideWidth,
-                height: guideHeight
-            )
-            let normalizedGuideRect = CGRect(
-                x: (guideRect.minX + proxy.safeAreaInsets.leading) / max(1, previewWidth),
-                y: (guideRect.minY + proxy.safeAreaInsets.top) / max(1, previewHeight),
-                width: guideRect.width / max(1, previewWidth),
-                height: guideRect.height / max(1, previewHeight)
+            // Match the stock Camera app: show the full 4:3 sensor (no
+            // aspect-fill crop) in a full-width region pinned just below the
+            // top tool bar. The framing, the captured photo, and the pose guide
+            // then all share exactly this rectangle.
+            // Top bar: 8pt top padding + 46pt controls, plus an 8pt gap.
+            let cameraWidth = proxy.size.width
+            let cameraHeight = cameraWidth * 4 / 3
+            let cameraTop: CGFloat = 62
+            let cameraCenter = CGPoint(
+                x: cameraWidth / 2,
+                y: cameraTop + cameraHeight / 2
             )
 
             ZStack {
                 Theme.Colors.black.ignoresSafeArea()
                 CameraViewport(
                     camera: camera,
-                    normalizedGuideRect: normalizedGuideRect,
+                    normalizedGuideRect: CGRect(x: 0, y: 0, width: 1, height: 1),
                     normalizedPhotoCrop: $normalizedCaptureCrop
                 )
-                .frame(width: previewWidth, height: previewHeight)
-                .position(previewCenter)
+                .frame(width: cameraWidth, height: cameraHeight)
+                .position(cameraCenter)
                 .clipped()
-                .ignoresSafeArea()
 
-                if camera.authorizationStatus == .authorized {
-                    if let ghost = appState.selectedGhost {
-                        GhostCaptureOverlay(
-                            ghost: ghost,
-                            flipped: appState.ghostFlipped,
-                            opacity: ghostHidden ? 0 : appState.ghostOpacity,
-                            offset: $ghostOffset,
-                            scale: $ghostScale
-                        )
-                        .frame(width: guideWidth, height: guideHeight)
-                        .position(x: guideRect.midX, y: guideRect.midY)
-                    }
-
-                    CaptureAreaGuide()
-                        .frame(width: guideWidth, height: guideHeight)
-                        .position(x: guideRect.midX, y: guideRect.midY)
+                if camera.authorizationStatus == .authorized, let ghost = appState.selectedGhost {
+                    GhostCaptureOverlay(
+                        ghost: ghost,
+                        flipped: appState.ghostFlipped,
+                        opacity: ghostHidden ? 0 : appState.ghostOpacity,
+                        offset: $ghostOffset,
+                        scale: $ghostScale
+                    )
+                    .frame(width: cameraWidth, height: cameraHeight)
+                    .position(cameraCenter)
                 }
 
                 VStack(spacing: 0) {
@@ -203,46 +179,62 @@ struct CameraView: View {
         }
     }
 
+    @ViewBuilder
     private var referenceStrip: some View {
-        GlassSurface(cornerRadius: Theme.Radius.lg) {
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    GlassIconButton(symbol: "square.grid.2x2", accessibilityLabel: "Open pose library", size: 40) {
-                        appState.showsPoseLibrary = true
-                    }
-                    if favoriteOverlays.isEmpty {
-                        Button("FAVORITE A POSE") { appState.showsPoseLibrary = true }
-                            .font(.system(size: 12, weight: .black))
-                            .foregroundStyle(Theme.Colors.ink)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        ScrollView(.horizontal) {
-                            HStack(spacing: 8) {
-                                ForEach(favoriteOverlays) { overlay in
-                                    PoseThumbnail(
-                                        overlay: overlay,
-                                        selected: appState.selectedGhost?.id == overlay.id,
-                                        flipped: appState.selectedGhost?.id == overlay.id && appState.ghostFlipped
-                                    ) {
-                                        appState.cycleGhost(overlay)
-                                        try? modelContext.save()
-                                    } onDelete: {
-                                        guard !overlay.isBuiltIn else { return }
-                                        if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
-                                        modelContext.delete(overlay)
-                                        Task { await ImageStore.shared.deleteOverlay(overlay) }
+        if referenceStripCollapsed {
+            HStack {
+                Spacer()
+                GlassIconButton(symbol: "chevron.up", accessibilityLabel: "Show poses", size: 40) {
+                    withAnimation(.poserGlide) { referenceStripCollapsed = false }
+                }
+                Spacer()
+            }
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            GlassSurface(cornerRadius: Theme.Radius.lg) {
+                VStack(spacing: 10) {
+                    HStack(spacing: 10) {
+                        GlassIconButton(symbol: "square.grid.2x2", accessibilityLabel: "Open pose library", size: 40) {
+                            appState.showsPoseLibrary = true
+                        }
+                        if favoriteOverlays.isEmpty {
+                            Button("FAVORITE A POSE") { appState.showsPoseLibrary = true }
+                                .font(.system(size: 12, weight: .black))
+                                .foregroundStyle(Theme.Colors.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 8) {
+                                    ForEach(favoriteOverlays) { overlay in
+                                        PoseThumbnail(
+                                            overlay: overlay,
+                                            selected: appState.selectedGhost?.id == overlay.id,
+                                            flipped: appState.selectedGhost?.id == overlay.id && appState.ghostFlipped
+                                        ) {
+                                            appState.cycleGhost(overlay)
+                                            try? modelContext.save()
+                                        } onDelete: {
+                                            guard !overlay.isBuiltIn else { return }
+                                            if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
+                                            modelContext.delete(overlay)
+                                            Task { await ImageStore.shared.deleteOverlay(overlay) }
+                                        }
                                     }
                                 }
                             }
+                            .scrollIndicators(.hidden)
                         }
-                        .scrollIndicators(.hidden)
+                        GlassIconButton(symbol: "chevron.down", accessibilityLabel: "Hide poses", size: 40) {
+                            withAnimation(.poserGlide) { referenceStripCollapsed = true }
+                        }
                     }
+                    GhostOpacityBar(opacity: Bindable(appState).ghostOpacity)
+                        .disabled(appState.selectedGhost == nil)
+                        .opacity(appState.selectedGhost == nil ? 0.4 : 1)
                 }
-                GhostOpacityBar(opacity: Bindable(appState).ghostOpacity)
-                    .disabled(appState.selectedGhost == nil)
-                    .opacity(appState.selectedGhost == nil ? 0.4 : 1)
+                .padding(10)
             }
-            .padding(10)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
 
@@ -335,87 +327,6 @@ struct CameraView: View {
     }
 }
 
-private struct CaptureAreaGuide: View {
-    var body: some View {
-        ZStack {
-            CaptureCornerBubble(rotation: .zero)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            CaptureCornerBubble(rotation: .degrees(90))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-            CaptureCornerBubble(rotation: .degrees(180))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-            CaptureCornerBubble(rotation: .degrees(270))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct CaptureCornerBubble: View {
-    let rotation: Angle
-
-    var body: some View {
-        Group {
-            if #available(iOS 26, *) {
-                cornerBody
-                    .glassEffect(
-                        .clear.tint(.white.opacity(0.08)),
-                        in: CaptureCornerShape()
-                    )
-            } else {
-                cornerBody
-                    .background(.ultraThinMaterial, in: CaptureCornerShape())
-            }
-        }
-        .rotationEffect(rotation)
-    }
-
-    private var cornerBody: some View {
-        CaptureCornerShape()
-            .fill(.white.opacity(0.05))
-            .overlay {
-                CaptureCornerShape()
-                    .stroke(.white.opacity(0.70), lineWidth: 0.45)
-            }
-            .overlay {
-                CaptureCornerLine()
-                    .stroke(
-                        LinearGradient(
-                            colors: [.white.opacity(0.76), .white.opacity(0.22)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ),
-                        style: StrokeStyle(lineWidth: 0.65, lineCap: .round, lineJoin: .round)
-                    )
-                    .padding(1.75)
-            }
-            .frame(width: 26, height: 26)
-            .shadow(color: .white.opacity(0.12), radius: 1.5)
-            .shadow(color: .black.opacity(0.13), radius: 3, y: 1)
-    }
-}
-
-private struct CaptureCornerShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        CaptureCornerLine()
-            .path(in: rect.insetBy(dx: 1.75, dy: 1.75))
-            .strokedPath(
-                StrokeStyle(lineWidth: 3.5, lineCap: .round, lineJoin: .round)
-            )
-    }
-}
-
-private struct CaptureCornerLine: Shape {
-    func path(in rect: CGRect) -> Path {
-        var path = Path()
-        path.move(to: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
-        return path
-    }
-}
-
 private struct CameraViewport: View {
     let camera: CameraController
     let normalizedGuideRect: CGRect
@@ -442,7 +353,7 @@ private struct GhostCaptureOverlay: View {
 
     var body: some View {
         GeometryReader { proxy in
-            LocalFileImage(url: ImageStore.shared.overlayURL(ghost), maxPixel: 1800)
+            LocalFileImage(url: ImageStore.shared.overlayURL(ghost), contentMode: .fit, maxPixel: 1800)
                 .id(ghost.cropData)
                 .frame(width: proxy.size.width, height: proxy.size.height)
                 .scaleEffect(x: flipped ? -scale : scale, y: scale)
