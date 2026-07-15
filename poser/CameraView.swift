@@ -237,9 +237,9 @@ struct CameraView: View {
                         .scrollIndicators(.hidden)
                     }
                 }
-                if appState.selectedGhost != nil {
-                    GhostOpacityBar(opacity: Bindable(appState).ghostOpacity)
-                }
+                GhostOpacityBar(opacity: Bindable(appState).ghostOpacity)
+                    .disabled(appState.selectedGhost == nil)
+                    .opacity(appState.selectedGhost == nil ? 0.4 : 1)
             }
             .padding(10)
         }
