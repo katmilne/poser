@@ -139,17 +139,28 @@ struct CameraView: View {
                 ) {
                     camera.flash = camera.flash.next
                 }
-                ZStack(alignment: .bottomTrailing) {
-                    GlassIconButton(symbol: "timer", accessibilityLabel: "Timer \(timerSeconds) seconds", selected: timerSeconds > 0) {
-                        timerSeconds = timerSeconds == 0 ? 3 : timerSeconds == 3 ? 10 : 0
-                    }
-                    if timerSeconds > 0 {
-                        Text("\(timerSeconds)")
-                            .font(.system(size: 9, weight: .black, design: .monospaced))
-                            .foregroundStyle(Theme.Colors.ink)
-                            .padding(4)
-                    }
+                GlassIconButton(
+                    symbol: timerSeconds == 0 ? "timer" : "timer.circle.fill",
+                    accessibilityLabel: timerSeconds == 0 ? "Timer off" : "Timer \(timerSeconds) seconds",
+                    selected: timerSeconds > 0
+                ) {
+                    timerSeconds = timerSeconds == 0 ? 3 : timerSeconds == 3 ? 10 : 0
                 }
+            }
+        }
+        // Rendered outside GlassEffectContainer: content overlapping a glass
+        // shape's own bounds can get covered by its live backdrop even via
+        // .overlay, so the badge is anchored here instead, above the whole bar.
+        .overlay(alignment: .topTrailing) {
+            if timerSeconds > 0 {
+                Text("\(timerSeconds)")
+                    .font(.system(size: 10, weight: .black, design: .rounded))
+                    .foregroundStyle(.white)
+                    .frame(minWidth: 16, minHeight: 16)
+                    .padding(.horizontal, 3)
+                    .background(Capsule().fill(Theme.Colors.ink))
+                    .offset(x: 4, y: -4)
+                    .allowsHitTesting(false)
             }
         }
     }

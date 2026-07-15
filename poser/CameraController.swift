@@ -15,7 +15,13 @@ enum FlashSetting: String, CaseIterable {
         }
     }
 
-    var symbol: String { self == .off ? "bolt.slash" : "bolt" }
+    var symbol: String {
+        switch self {
+        case .off: "bolt.slash.fill"
+        case .auto: "bolt.badge.a.fill"
+        case .on: "bolt.fill"
+        }
+    }
 }
 
 @MainActor
