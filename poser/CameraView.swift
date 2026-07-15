@@ -501,7 +501,7 @@ private struct PoseThumbnail: View {
                 maxPixel: 220
             )
             .scaleEffect(x: flipped ? -1 : 1, y: 1)
-            .frame(width: 52, height: 52)
+            .frame(width: 54, height: 72)
             .background(Theme.Colors.black.opacity(0.16))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
