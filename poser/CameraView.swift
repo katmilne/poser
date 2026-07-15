@@ -16,14 +16,11 @@ struct CameraView: View {
     @State private var ghostHidden = false
     @State private var ghostOffset: CGSize = .zero
     @State private var ghostScale: CGFloat = 1
+    @State private var normalizedCaptureCrop = NormalizedCrop.full
     @State private var errorMessage: String?
 
-    private var recentOverlays: [OverlayRecord] {
-        overlays
-            .filter { $0.lastUsedAt != nil }
-            .sorted { ($0.lastUsedAt ?? .distantPast) > ($1.lastUsedAt ?? .distantPast) }
-            .prefix(10)
-            .map { $0 }
+    private var favoriteOverlays: [OverlayRecord] {
+        overlays.filter(\.isFavorite)
     }
 
     var body: some View {
@@ -38,7 +35,7 @@ struct CameraView: View {
                 x: previewWidth / 2,
                 y: previewHeight / 2
             )
-            let guideTop: CGFloat = 68
+            let guideTop = max(68, proxy.safeAreaInsets.top + 9)
             let guideBottom = proxy.size.height - 220
             let availableGuideHeight = max(240, guideBottom - guideTop)
             let guideWidth = min(
@@ -46,27 +43,47 @@ struct CameraView: View {
                 availableGuideHeight * Theme.viewportAspect
             )
             let guideHeight = guideWidth / Theme.viewportAspect
+            let guideRect = CGRect(
+                x: (proxy.size.width - guideWidth) / 2,
+                y: guideTop,
+                width: guideWidth,
+                height: guideHeight
+            )
+            let normalizedGuideRect = CGRect(
+                x: (guideRect.minX + proxy.safeAreaInsets.leading) / max(1, previewWidth),
+                y: (guideRect.minY + proxy.safeAreaInsets.top) / max(1, previewHeight),
+                width: guideRect.width / max(1, previewWidth),
+                height: guideRect.height / max(1, previewHeight)
+            )
 
             ZStack {
                 Theme.Colors.black.ignoresSafeArea()
                 CameraViewport(
                     camera: camera,
-                    ghost: appState.selectedGhost,
-                    ghostFlipped: appState.ghostFlipped,
-                    ghostOpacity: ghostHidden ? 0 : appState.ghostOpacity,
-                    ghostOffset: $ghostOffset,
-                    ghostScale: $ghostScale
+                    normalizedGuideRect: normalizedGuideRect,
+                    normalizedPhotoCrop: $normalizedCaptureCrop
                 )
                 .frame(width: previewWidth, height: previewHeight)
                 .position(previewCenter)
                 .clipped()
                 .ignoresSafeArea()
 
-                if camera.authorizationStatus == .authorized,
-                   camera.configurationErrorMessage == nil {
+                if camera.authorizationStatus == .authorized {
+                    if let ghost = appState.selectedGhost {
+                        GhostCaptureOverlay(
+                            ghost: ghost,
+                            flipped: appState.ghostFlipped,
+                            opacity: ghostHidden ? 0 : appState.ghostOpacity,
+                            offset: $ghostOffset,
+                            scale: $ghostScale
+                        )
+                        .frame(width: guideWidth, height: guideHeight)
+                        .position(x: guideRect.midX, y: guideRect.midY)
+                    }
+
                     CaptureAreaGuide()
                         .frame(width: guideWidth, height: guideHeight)
-                        .position(x: proxy.size.width / 2, y: guideTop + guideHeight / 2)
+                        .position(x: guideRect.midX, y: guideRect.midY)
                 }
 
                 VStack(spacing: 0) {
@@ -112,6 +129,10 @@ struct CameraView: View {
             }
         }
         .task { await camera.requestAccessAndStart() }
+        .onChange(of: appState.selectedGhost?.id, initial: true) {
+            ghostOffset = .zero
+            ghostScale = 1
+        }
         .onDisappear { camera.stop() }
         .alert("Camera hiccup", isPresented: Binding(
             get: { errorMessage != nil },
@@ -189,15 +210,15 @@ struct CameraView: View {
                     GlassIconButton(symbol: "square.grid.2x2", accessibilityLabel: "Open pose library", size: 40) {
                         appState.showsPoseLibrary = true
                     }
-                    if recentOverlays.isEmpty {
-                        Button("ADD A POSE") { appState.showsPoseLibrary = true }
+                    if favoriteOverlays.isEmpty {
+                        Button("FAVORITE A POSE") { appState.showsPoseLibrary = true }
                             .font(.system(size: 12, weight: .black))
                             .foregroundStyle(Theme.Colors.ink)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         ScrollView(.horizontal) {
                             HStack(spacing: 8) {
-                                ForEach(recentOverlays) { overlay in
+                                ForEach(favoriteOverlays) { overlay in
                                     PoseThumbnail(
                                         overlay: overlay,
                                         selected: appState.selectedGhost?.id == overlay.id,
@@ -287,7 +308,8 @@ struct CameraView: View {
             let stored = try await ImageStore.shared.persistCapture(
                 data,
                 facing: camera.facing,
-                ghostOverlay: ghostSnapshot
+                ghostOverlay: ghostSnapshot,
+                normalizedCrop: normalizedCaptureCrop
             )
             let record = ShotRecord(
                 id: stored.id,
@@ -395,57 +417,71 @@ private struct CaptureCornerLine: Shape {
 
 private struct CameraViewport: View {
     let camera: CameraController
-    let ghost: OverlayRecord?
-    let ghostFlipped: Bool
-    let ghostOpacity: Double
-    @Binding var ghostOffset: CGSize
-    @Binding var ghostScale: CGFloat
+    let normalizedGuideRect: CGRect
+    @Binding var normalizedPhotoCrop: NormalizedCrop
+
+    var body: some View {
+        CameraPreview(
+            session: camera.session,
+            normalizedGuideRect: normalizedGuideRect,
+            normalizedPhotoCrop: $normalizedPhotoCrop
+        )
+    }
+}
+
+private struct GhostCaptureOverlay: View {
+    let ghost: OverlayRecord
+    let flipped: Bool
+    let opacity: Double
+    @Binding var offset: CGSize
+    @Binding var scale: CGFloat
+
     @State private var dragStart: CGSize = .zero
     @State private var scaleStart: CGFloat = 1
 
     var body: some View {
         GeometryReader { proxy in
-            ZStack {
-                CameraPreview(session: camera.session)
-                if let ghost {
-                    LocalFileImage(url: ImageStore.shared.overlayURL(ghost), maxPixel: 1800)
-                        .scaleEffect(x: ghostFlipped ? -ghostScale : ghostScale, y: ghostScale)
-                        .offset(ghostOffset)
-                        .opacity(ghostOpacity)
-                        .allowsHitTesting(false)
+            LocalFileImage(url: ImageStore.shared.overlayURL(ghost), maxPixel: 1800)
+                .id(ghost.cropData)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .scaleEffect(x: flipped ? -scale : scale, y: scale)
+                .offset(offset)
+                .opacity(opacity)
+                .frame(width: proxy.size.width, height: proxy.size.height)
+                .clipped()
+                .contentShape(.rect)
+                .simultaneousGesture(
+                    DragGesture()
+                        .onChanged { value in
+                            let maxX = proxy.size.width * 0.6
+                            let maxY = proxy.size.height * 0.6
+                            offset = CGSize(
+                                width: min(maxX, max(-maxX, dragStart.width + value.translation.width)),
+                                height: min(maxY, max(-maxY, dragStart.height + value.translation.height))
+                            )
+                        }
+                        .onEnded { _ in dragStart = offset }
+                )
+                .simultaneousGesture(
+                    MagnifyGesture()
+                        .onChanged { value in scale = min(2.5, max(0.4, scaleStart * value.magnification)) }
+                        .onEnded { _ in scaleStart = scale }
+                )
+                .onTapGesture(count: 2) {
+                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    withAnimation(.poserSettle) { resetGhostTransform() }
                 }
-            }
-            .contentShape(.rect)
-            .simultaneousGesture(
-                DragGesture()
-                    .onChanged { value in
-                        let maxX = proxy.size.width * 0.6
-                        let maxY = proxy.size.height * 0.6
-                        ghostOffset = CGSize(
-                            width: min(maxX, max(-maxX, dragStart.width + value.translation.width)),
-                            height: min(maxY, max(-maxY, dragStart.height + value.translation.height))
-                        )
-                    }
-                    .onEnded { _ in dragStart = ghostOffset },
-                isEnabled: ghost != nil
-            )
-            .simultaneousGesture(
-                MagnifyGesture()
-                    .onChanged { value in ghostScale = min(2.5, max(0.4, scaleStart * value.magnification)) }
-                    .onEnded { _ in scaleStart = ghostScale },
-                isEnabled: ghost != nil
-            )
-            .onTapGesture(count: 2) {
-                guard ghost != nil else { return }
-                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                withAnimation(.poserSettle) {
-                    ghostOffset = .zero
-                    ghostScale = 1
-                    dragStart = .zero
-                    scaleStart = 1
+                .onChange(of: ghost.id) {
+                    withAnimation(.poserSettle) { resetGhostTransform() }
                 }
-            }
         }
+    }
+
+    private func resetGhostTransform() {
+        offset = .zero
+        scale = 1
+        dragStart = .zero
+        scaleStart = 1
     }
 }
 
@@ -459,14 +495,22 @@ private struct PoseThumbnail: View {
 
     var body: some View {
         Button(action: action) {
-            LocalFileImage(url: ImageStore.shared.overlayURL(overlay), maxPixel: 220)
-                .scaleEffect(x: flipped ? -1 : 1, y: 1)
-                .frame(width: 52, height: 52)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(selected ? Theme.Colors.ink : Theme.Colors.glassEdge, lineWidth: selected ? 2 : 1)
-                }
+            LocalFileImage(
+                url: ImageStore.shared.overlayURL(overlay),
+                contentMode: .fit,
+                maxPixel: 220
+            )
+            .scaleEffect(x: flipped ? -1 : 1, y: 1)
+            .frame(width: 52, height: 52)
+            .background(Theme.Colors.black.opacity(0.16))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(
+                        selected ? Color.white : Theme.Colors.glassEdge,
+                        lineWidth: selected ? 2 : 1
+                    )
+            }
         }
         .buttonStyle(PressScaleButtonStyle())
         .contextMenu {
@@ -475,8 +519,6 @@ private struct PoseThumbnail: View {
         .confirmationDialog("Delete this pose from POSER?", isPresented: $confirmsDelete) {
             Button("Delete pose", role: .destructive, action: onDelete)
             Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("The original photo stays in Photos.")
         }
         .accessibilityLabel(selected ? "Selected pose" : "Pose")
         .accessibilityHint("Tap to select, flip, then remove")

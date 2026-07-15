@@ -22,6 +22,13 @@ actor LocalImageLoader {
         cache.setObject(image, forKey: key)
         return image
     }
+
+    func invalidate(url _: URL) {
+        // NSCache intentionally does not expose its keys. The image URLs are
+        // rewritten rarely, so clearing the bounded cache is both predictable
+        // and cheap compared with serving a stale pose crop.
+        cache.removeAllObjects()
+    }
 }
 
 struct LocalFileImage: View {

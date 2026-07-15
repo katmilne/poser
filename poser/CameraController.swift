@@ -57,6 +57,14 @@ final class CameraController {
     var isReady: Bool { isRunning && hasProducedFrame && !isSwitching }
 
     func requestAccessAndStart() async {
+#if targetEnvironment(simulator)
+        // iOS Simulator has no camera capture source. Avoid asking AVFoundation
+        // to discover one, which otherwise emits FigCaptureSourceRemote
+        // assertions even though the unavailable-camera state is expected.
+        authorizationStatus = .authorized
+        configurationErrorMessage = CameraError.unavailable.localizedDescription
+        return
+#else
         let granted: Bool
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
@@ -76,6 +84,7 @@ final class CameraController {
         } catch {
             configurationErrorMessage = error.localizedDescription
         }
+#endif
     }
 
     func stop() {
@@ -86,6 +95,9 @@ final class CameraController {
     }
 
     func switchCamera() async throws {
+#if targetEnvironment(simulator)
+        throw CameraError.unavailable
+#else
         guard !isSwitching else { return }
         isSwitching = true
         hasProducedFrame = false
@@ -109,6 +121,7 @@ final class CameraController {
         }
         configureConnections()
         session.commitConfiguration()
+#endif
     }
 
     func capturePhoto() async throws -> Data {

@@ -9,10 +9,11 @@ struct PoseLibraryView: View {
     @Query(sort: \OverlayRecord.addedAt, order: .reverse) private var overlays: [OverlayRecord]
 
     @State private var pickedItems: [PhotosPickerItem] = []
-    @State private var imported: [OverlayRecord] = []
     @State private var selectedTags: Set<String> = []
     @State private var tagging: [OverlayRecord] = []
+    @State private var framingRequest: PoseFramingRequest?
     @State private var importError: String?
+    @State private var isImporting = false
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -42,6 +43,14 @@ struct PoseLibraryView: View {
                                     dismiss()
                                 } onTag: {
                                     tagging = [overlay]
+                                } onReframe: {
+                                    framingRequest = PoseFramingRequest(overlays: [overlay], tagsAfter: false)
+                                } onFavorite: {
+                                    overlay.isFavorite.toggle()
+                                    if !overlay.isFavorite, appState.selectedGhost?.id == overlay.id {
+                                        appState.selectedGhost = nil
+                                    }
+                                    try? modelContext.save()
                                 } onDelete: {
                                     if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
                                     modelContext.delete(overlay)
@@ -53,6 +62,18 @@ struct PoseLibraryView: View {
                     .padding(16)
                 }
                 .scrollIndicators(.hidden)
+
+                if isImporting {
+                    Color.black.opacity(0.18).ignoresSafeArea()
+                    GlassSurface(cornerRadius: Theme.Radius.md) {
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("PREPARING POSES…")
+                                .font(.system(size: 12, weight: .black, design: .monospaced))
+                        }
+                        .padding(18)
+                    }
+                }
             }
             .navigationTitle("POSES")
             .navigationBarTitleDisplayMode(.inline)
@@ -65,6 +86,16 @@ struct PoseLibraryView: View {
         .onChange(of: pickedItems) {
             guard !pickedItems.isEmpty else { return }
             Task { await importPickedItems() }
+        }
+        .fullScreenCover(item: $framingRequest) { request in
+            PoseFramingFlow(overlays: request.overlays) {
+                framingRequest = nil
+                guard request.tagsAfter else { return }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(350))
+                    tagging = request.overlays
+                }
+            }
         }
         .fullScreenCover(isPresented: Binding(
             get: { !tagging.isEmpty },
@@ -153,6 +184,8 @@ struct PoseLibraryView: View {
     private func importPickedItems() async {
         let items = pickedItems
         pickedItems = []
+        isImporting = true
+        defer { isImporting = false }
         var newRecords: [OverlayRecord] = []
         do {
             for (index, item) in items.enumerated() {
@@ -163,61 +196,382 @@ struct PoseLibraryView: View {
                     fileName: stored.fileName,
                     addedAt: stored.addedAt,
                     width: stored.width,
-                    height: stored.height
+                    height: stored.height,
+                    sourceFileName: stored.sourceFileName,
+                    sourceWidth: stored.sourceWidth,
+                    sourceHeight: stored.sourceHeight,
+                    crop: stored.crop,
+                    canvasAspect: stored.canvasAspect
                 )
                 modelContext.insert(record)
                 newRecords.append(record)
             }
             try modelContext.save()
-            imported = newRecords
-            tagging = newRecords
+            if !newRecords.isEmpty {
+                framingRequest = PoseFramingRequest(overlays: newRecords, tagsAfter: true)
+            }
         } catch {
             importError = error.localizedDescription
         }
     }
 }
 
+private struct PoseFramingRequest: Identifiable {
+    let id = UUID()
+    let overlays: [OverlayRecord]
+    let tagsAfter: Bool
+}
+
 private struct PoseLibraryTile: View {
     let overlay: OverlayRecord
     let onSelect: () -> Void
     let onTag: () -> Void
+    let onReframe: () -> Void
+    let onFavorite: () -> Void
     let onDelete: () -> Void
     @State private var confirmsDelete = false
 
     var body: some View {
-        Button(action: onSelect) {
-            LocalFileImage(url: ImageStore.shared.overlayURL(overlay), maxPixel: 700)
-                .frame(maxWidth: .infinity)
-                .aspectRatio(Theme.viewportAspect, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
-                .overlay(alignment: .bottomLeading) {
-                    if !overlay.tags.isEmpty {
-                        Text(overlay.tags.map { $0.uppercased() }.joined(separator: " · "))
-                            .font(.system(size: 9, weight: .black, design: .monospaced))
-                            .foregroundStyle(Theme.Colors.ink)
-                            .padding(.horizontal, 8)
-                            .frame(height: 25)
-                            .background(.ultraThinMaterial, in: Capsule())
-                            .padding(8)
+        ZStack(alignment: .topTrailing) {
+            Button(action: onSelect) {
+                LocalFileImage(url: ImageStore.shared.overlayURL(overlay), maxPixel: 700)
+                    .frame(maxWidth: .infinity)
+                    .aspectRatio(Theme.viewportAspect, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                    .overlay(alignment: .bottomLeading) {
+                        if !overlay.tags.isEmpty {
+                            Text(overlay.tags.map { $0.uppercased() }.joined(separator: " · "))
+                                .font(.system(size: 9, weight: .black, design: .monospaced))
+                                .foregroundStyle(Theme.Colors.ink)
+                                .padding(.horizontal, 8)
+                                .frame(height: 25)
+                                .background(.ultraThinMaterial, in: Capsule())
+                                .padding(8)
+                        }
                     }
+                    .overlay {
+                        RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                            .stroke(Color.white.opacity(0.88), lineWidth: 1)
+                    }
+                    .shadow(color: Theme.stickerShadow, radius: 24, y: 8)
+            }
+            .buttonStyle(PressScaleButtonStyle())
+            .contextMenu {
+                Button(
+                    overlay.isFavorite ? "Remove from favorites" : "Add to favorites",
+                    systemImage: overlay.isFavorite ? "heart.slash" : "heart",
+                    action: onFavorite
+                )
+                Button("Edit tags", systemImage: "tag", action: onTag)
+                Button("Reframe pose", systemImage: "crop", action: onReframe)
+                Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+            }
+
+            Button(action: onFavorite) {
+                GlassSurface(
+                    cornerRadius: 18,
+                    tint: Theme.Colors.black.opacity(0.14),
+                    interactive: true
+                ) {
+                    Image(systemName: overlay.isFavorite ? "heart.fill" : "heart")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(overlay.isFavorite ? Color.white : Theme.Colors.ink)
+                        .frame(width: 36, height: 36)
                 }
-                .overlay {
-                    RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                        .stroke(Color.white.opacity(0.88), lineWidth: 1)
-                }
-                .shadow(color: Theme.stickerShadow, radius: 24, y: 8)
-        }
-        .buttonStyle(PressScaleButtonStyle())
-        .contextMenu {
-            Button("Edit tags", systemImage: "tag", action: onTag)
-            Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+            }
+            .buttonStyle(PressScaleButtonStyle())
+            .padding(8)
+            .accessibilityLabel(overlay.isFavorite ? "Remove pose from favorites" : "Add pose to favorites")
+            .accessibilityAddTraits(overlay.isFavorite ? .isSelected : [])
+            .sensoryFeedback(.selection, trigger: overlay.isFavorite)
         }
         .confirmationDialog("Delete this pose from POSER?", isPresented: $confirmsDelete) {
             Button("Delete pose", role: .destructive, action: onDelete)
             Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("The original stays in Photos.")
         }
+    }
+}
+
+private struct PoseFramingFlow: View {
+    @Environment(\.modelContext) private var modelContext
+
+    let overlays: [OverlayRecord]
+    let onDone: () -> Void
+
+    @State private var index = 0
+    @State private var crop = NormalizedCrop.full
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    private var current: OverlayRecord? {
+        overlays.indices.contains(index) ? overlays[index] : nil
+    }
+
+    var body: some View {
+        ZStack {
+            SkyBackground(quiet: true)
+
+            VStack(spacing: 16) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("FRAME YOUR POSE")
+                            .font(.system(size: 18, weight: .black, design: .rounded))
+                        Text("3:4 CAMERA FRAME")
+                            .font(.system(size: 10, weight: .black, design: .monospaced))
+                            .tracking(1.3)
+                            .foregroundStyle(Theme.Colors.textDim)
+                    }
+                    Spacer()
+                    if overlays.count > 1 {
+                        Text("\(index + 1) / \(overlays.count)")
+                            .font(.system(size: 11, weight: .black, design: .monospaced))
+                            .foregroundStyle(Theme.Colors.textDim)
+                    }
+                    GlassIconButton(symbol: "xmark", accessibilityLabel: "Keep current pose frame", action: onDone)
+                }
+                .padding(.horizontal, 18)
+
+                if let current {
+                    PoseCropCanvas(overlay: current, crop: $crop)
+                        .padding(.horizontal, 24)
+
+                    Text("DRAG TO POSITION · PINCH TO ZOOM")
+                        .font(.system(size: 10, weight: .black, design: .monospaced))
+                        .tracking(1.1)
+                        .foregroundStyle(Theme.Colors.textDim)
+
+                    HStack(spacing: 12) {
+                        GlassTextButton(title: "RESET", compact: true) {
+                            withAnimation(.poserSettle) {
+                                crop = PoseCropGeometry.maximumCrop(for: current)
+                            }
+                        }
+                        GlassTextButton(
+                            title: index == overlays.count - 1 ? "USE FRAME" : "NEXT POSE",
+                            disabled: isSaving
+                        ) {
+                            Task { await saveAndAdvance(current) }
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 18)
+
+            if isSaving {
+                Color.black.opacity(0.16).ignoresSafeArea()
+                ProgressView()
+                    .controlSize(.large)
+                    .padding(22)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+        }
+        .onAppear { loadCrop() }
+        .alert("Couldn't frame that pose", isPresented: Binding(
+            get: { errorMessage != nil },
+            set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage ?? "Please try again.")
+        }
+    }
+
+    private func loadCrop() {
+        crop = current?.crop ?? .full
+    }
+
+    @MainActor
+    private func saveAndAdvance(_ overlay: OverlayRecord) async {
+        guard !isSaving else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let dimensions = try await ImageStore.shared.updateOverlayCrop(
+                sourceFileName: overlay.sourceFileName,
+                outputFileName: overlay.fileName,
+                crop: crop
+            )
+            overlay.crop = crop
+            overlay.canvasAspect = 3.0 / 4.0
+            overlay.width = dimensions.width
+            overlay.height = dimensions.height
+            try modelContext.save()
+
+            if index == overlays.count - 1 {
+                onDone()
+            } else {
+                index += 1
+                loadCrop()
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct PoseCropCanvas: View {
+    let overlay: OverlayRecord
+    @Binding var crop: NormalizedCrop
+
+    @State private var dragStart = NormalizedCrop.full
+    @State private var magnifyStart = NormalizedCrop.full
+    @State private var isDragging = false
+    @State private var isMagnifying = false
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+            let drawing = PoseCropGeometry.drawing(for: crop, in: size)
+
+            LocalFileImage(
+                url: ImageStore.shared.overlaySourceURL(overlay),
+                contentMode: .fill,
+                maxPixel: 2200
+            )
+            .frame(width: drawing.size.width, height: drawing.size.height)
+            .offset(drawing.offset)
+            .frame(width: size.width, height: size.height)
+            .clipped()
+            .overlay {
+                Rectangle()
+                    .stroke(.white.opacity(0.92), lineWidth: 1)
+                RuleOfThirdsGrid()
+                    .stroke(.white.opacity(0.38), lineWidth: 0.5)
+            }
+            .contentShape(.rect)
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if !isDragging {
+                            dragStart = crop
+                            isDragging = true
+                        }
+                        crop = PoseCropGeometry.dragged(
+                            from: dragStart,
+                            translation: value.translation,
+                            canvasSize: size,
+                            maximum: PoseCropGeometry.maximumCrop(for: overlay)
+                        )
+                    }
+                    .onEnded { _ in
+                        dragStart = crop
+                        isDragging = false
+                    }
+            )
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .onChanged { value in
+                        if !isMagnifying {
+                            magnifyStart = crop
+                            isMagnifying = true
+                        }
+                        crop = PoseCropGeometry.magnified(
+                            from: magnifyStart,
+                            magnification: value.magnification,
+                            maximum: PoseCropGeometry.maximumCrop(for: overlay)
+                        )
+                    }
+                    .onEnded { _ in
+                        magnifyStart = crop
+                        isMagnifying = false
+                    }
+            )
+            .onChange(of: overlay.id, initial: true) {
+                dragStart = crop
+                magnifyStart = crop
+            }
+        }
+        .aspectRatio(Theme.viewportAspect, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                .stroke(Color.white, lineWidth: 1)
+        }
+        .shadow(color: Theme.stickerShadow, radius: 24, y: 9)
+        .accessibilityLabel("Pose framing preview")
+        .accessibilityHint("Drag to position the pose and pinch to zoom")
+    }
+}
+
+private enum PoseCropGeometry {
+    static func maximumCrop(for overlay: OverlayRecord) -> NormalizedCrop {
+        let width = Double(overlay.sourceWidth ?? overlay.width)
+        let height = Double(max(1, overlay.sourceHeight ?? overlay.height))
+        let sourceAspect = width / height
+        let targetAspect = overlay.canvasAspect
+        if sourceAspect > targetAspect {
+            let cropWidth = targetAspect / sourceAspect
+            return NormalizedCrop(x: (1 - cropWidth) / 2, y: 0, width: cropWidth, height: 1)
+        }
+        let cropHeight = sourceAspect / targetAspect
+        return NormalizedCrop(x: 0, y: (1 - cropHeight) / 2, width: 1, height: cropHeight)
+    }
+
+    static func drawing(for crop: NormalizedCrop, in canvas: CGSize) -> (size: CGSize, offset: CGSize) {
+        let width = canvas.width / max(0.0001, crop.width)
+        let height = canvas.height / max(0.0001, crop.height)
+        let offsetX = ((0.5 - crop.x) / max(0.0001, crop.width) - 0.5) * canvas.width
+        let offsetY = ((0.5 - crop.y) / max(0.0001, crop.height) - 0.5) * canvas.height
+        return (CGSize(width: width, height: height), CGSize(width: offsetX, height: offsetY))
+    }
+
+    static func dragged(
+        from start: NormalizedCrop,
+        translation: CGSize,
+        canvasSize: CGSize,
+        maximum: NormalizedCrop
+    ) -> NormalizedCrop {
+        guard canvasSize.width > 0, canvasSize.height > 0 else { return start }
+        var next = start
+        next.x = start.x - Double(translation.width / canvasSize.width) * start.width
+        next.y = start.y - Double(translation.height / canvasSize.height) * start.height
+        return clamped(next, maximum: maximum)
+    }
+
+    static func magnified(
+        from start: NormalizedCrop,
+        magnification: CGFloat,
+        maximum: NormalizedCrop
+    ) -> NormalizedCrop {
+        let factor = max(0.25, min(4, Double(magnification)))
+        let minimumWidth = maximum.width / 4
+        let width = min(maximum.width, max(minimumWidth, start.width / factor))
+        let height = width * maximum.height / max(0.0001, maximum.width)
+        let centerX = start.x + start.width / 2
+        let centerY = start.y + start.height / 2
+        return clamped(
+            NormalizedCrop(
+                x: centerX - width / 2,
+                y: centerY - height / 2,
+                width: width,
+                height: height
+            ),
+            maximum: maximum
+        )
+    }
+
+    private static func clamped(_ crop: NormalizedCrop, maximum: NormalizedCrop) -> NormalizedCrop {
+        let width = min(maximum.width, max(maximum.width / 4, crop.width))
+        let height = min(maximum.height, max(maximum.height / 4, crop.height))
+        return NormalizedCrop(
+            x: min(1 - width, max(0, crop.x)),
+            y: min(1 - height, max(0, crop.y)),
+            width: width,
+            height: height
+        )
+    }
+}
+
+private struct RuleOfThirdsGrid: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        for fraction in [1.0 / 3.0, 2.0 / 3.0] {
+            path.move(to: CGPoint(x: rect.width * fraction, y: 0))
+            path.addLine(to: CGPoint(x: rect.width * fraction, y: rect.height))
+            path.move(to: CGPoint(x: 0, y: rect.height * fraction))
+            path.addLine(to: CGPoint(x: rect.width, y: rect.height * fraction))
+        }
+        return path
     }
 }
 

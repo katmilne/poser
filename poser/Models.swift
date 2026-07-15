@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import SwiftData
 
 nonisolated enum CameraFacing: String, Codable, CaseIterable, Sendable {
@@ -11,6 +12,19 @@ nonisolated struct ShotGhostReference: Codable, Equatable, Sendable {
     var fileName: String
     var width: Int
     var height: Int
+}
+
+nonisolated struct NormalizedCrop: Codable, Equatable, Sendable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+
+    static let full = NormalizedCrop(x: 0, y: 0, width: 1, height: 1)
+
+    var rect: CGRect {
+        CGRect(x: x, y: y, width: width, height: height)
+    }
 }
 
 nonisolated struct ShotSticker: Codable, Identifiable, Equatable, Sendable {
@@ -93,8 +107,14 @@ final class OverlayRecord {
     var addedAt: Date
     var width: Int
     var height: Int
+    var sourceFileName: String?
+    var sourceWidth: Int?
+    var sourceHeight: Int?
+    var cropData: Data?
+    var canvasAspectValue: Double?
     var tags: [String]
     var lastUsedAt: Date?
+    var isFavorite: Bool = false
 
     init(
         id: String,
@@ -102,16 +122,38 @@ final class OverlayRecord {
         addedAt: Date = .now,
         width: Int,
         height: Int,
+        sourceFileName: String? = nil,
+        sourceWidth: Int? = nil,
+        sourceHeight: Int? = nil,
+        crop: NormalizedCrop? = nil,
+        canvasAspect: Double = 3.0 / 4.0,
         tags: [String] = [],
-        lastUsedAt: Date? = nil
+        lastUsedAt: Date? = nil,
+        isFavorite: Bool = false
     ) {
         self.id = id
         self.fileName = fileName
         self.addedAt = addedAt
         self.width = width
         self.height = height
+        self.sourceFileName = sourceFileName
+        self.sourceWidth = sourceWidth
+        self.sourceHeight = sourceHeight
+        self.cropData = crop.flatMap { try? JSONEncoder().encode($0) }
+        self.canvasAspectValue = canvasAspect
         self.tags = tags
         self.lastUsedAt = lastUsedAt
+        self.isFavorite = isFavorite
+    }
+
+    var crop: NormalizedCrop {
+        get { cropData.flatMap { try? JSONDecoder().decode(NormalizedCrop.self, from: $0) } ?? .full }
+        set { cropData = try? JSONEncoder().encode(newValue) }
+    }
+
+    var canvasAspect: Double {
+        get { canvasAspectValue ?? 3.0 / 4.0 }
+        set { canvasAspectValue = newValue }
     }
 }
 
@@ -145,6 +187,11 @@ nonisolated struct PersistedOverlay: Sendable {
     let fileName: String
     let width: Int
     let height: Int
+    let sourceFileName: String?
+    let sourceWidth: Int?
+    let sourceHeight: Int?
+    let crop: NormalizedCrop
+    let canvasAspect: Double
     let addedAt: Date
 }
 

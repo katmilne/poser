@@ -69,9 +69,11 @@ struct OnboardingView: View {
                         withAnimation(.poserGlide) { page += 1 }
                     } else {
                         Task {
+#if !targetEnvironment(simulator)
                             if AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined {
                                 _ = await AVCaptureDevice.requestAccess(for: .video)
                             }
+#endif
                             onComplete()
                         }
                     }

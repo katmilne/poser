@@ -26,7 +26,7 @@ actor ImageStore {
     }
 
     func prepareDirectories() throws {
-        for path in ["shots", "shots/display", "shots/decorated", "shots/ghosts", "overlays", "stickers"] {
+        for path in ["shots", "shots/display", "shots/decorated", "shots/ghosts", "overlays", "overlays/sources", "stickers"] {
             try fileManager.createDirectory(
                 at: documentsURL.appending(path: path, directoryHint: .isDirectory),
                 withIntermediateDirectories: true
@@ -37,10 +37,11 @@ actor ImageStore {
     func persistCapture(
         _ data: Data,
         facing: CameraFacing,
-        ghostOverlay: OverlaySnapshot?
+        ghostOverlay: OverlaySnapshot?,
+        normalizedCrop: NormalizedCrop
     ) throws -> PersistedShot {
         try prepareDirectories()
-        let prepared = try prepareThreeByFourCapture(data)
+        let prepared = try prepareThreeByFourCapture(data, normalizedCrop: normalizedCrop)
         let dimensions = prepared.dimensions
         let id = UUID().uuidString.lowercased()
         let fileName = "\(id).jpg"
@@ -81,14 +82,110 @@ actor ImageStore {
     }
 
     func persistOverlay(data: Data, order: Int) throws -> PersistedOverlay {
+        try persistOverlay(data: data, id: UUID().uuidString.lowercased(), order: order)
+    }
+
+    func persistBundledOverlay(
+        sourceURL: URL,
+        preparedURL: URL,
+        id: String,
+        order: Int,
+        cropCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    ) throws -> PersistedOverlay {
         try prepareDirectories()
-        guard let dimensions = imageDimensions(data) else { throw StoreError.invalidImage }
-        let id = UUID().uuidString.lowercased()
+
+        // Built-in poses are prepared at build time. First launch only copies
+        // their display JPEG and original source instead of decoding and
+        // re-encoding every large PNG on the user's phone.
+        let sourceData = try Data(contentsOf: sourceURL, options: .mappedIfSafe)
+        let preparedData = try Data(contentsOf: preparedURL, options: .mappedIfSafe)
+        let sourceDimensions = try imageDimensions(sourceData)
+        let preparedDimensions = try imageDimensions(preparedData)
+        let crop = centeredThreeByFourCrop(
+            width: sourceDimensions.width,
+            height: sourceDimensions.height,
+            center: cropCenter
+        )
         let fileName = "\(id).jpg"
+        let sourceFileName = "\(id)-source.png"
         let addedAt = Date().addingTimeInterval(Double(-order) * 0.001)
-        let jpeg = transcodeJPEG(data, quality: 0.94) ?? data
-        try jpeg.write(to: documentsURL.appending(path: "overlays/\(fileName)"), options: .atomic)
-        return PersistedOverlay(id: id, fileName: fileName, width: dimensions.width, height: dimensions.height, addedAt: addedAt)
+
+        try sourceData.write(
+            to: documentsURL.appending(path: "overlays/sources/\(sourceFileName)"),
+            options: .atomic
+        )
+        try preparedData.write(
+            to: documentsURL.appending(path: "overlays/\(fileName)"),
+            options: .atomic
+        )
+
+        return PersistedOverlay(
+            id: id,
+            fileName: fileName,
+            width: preparedDimensions.width,
+            height: preparedDimensions.height,
+            sourceFileName: sourceFileName,
+            sourceWidth: sourceDimensions.width,
+            sourceHeight: sourceDimensions.height,
+            crop: crop,
+            canvasAspect: 3.0 / 4.0,
+            addedAt: addedAt
+        )
+    }
+
+    private func persistOverlay(
+        data: Data,
+        id: String,
+        order: Int,
+        cropCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    ) throws -> PersistedOverlay {
+        try prepareDirectories()
+        let source = try renderOrientedJPEG(data, maxPixel: 2560, quality: 0.94)
+        let crop = centeredThreeByFourCrop(
+            width: source.dimensions.width,
+            height: source.dimensions.height,
+            center: cropCenter
+        )
+        let prepared = try renderCroppedJPEG(source.data, crop: crop, maxPixel: 2048, quality: 0.94)
+        let fileName = "\(id).jpg"
+        let sourceFileName = "\(id)-source.jpg"
+        let addedAt = Date().addingTimeInterval(Double(-order) * 0.001)
+        try source.data.write(
+            to: documentsURL.appending(path: "overlays/sources/\(sourceFileName)"),
+            options: .atomic
+        )
+        try prepared.data.write(
+            to: documentsURL.appending(path: "overlays/\(fileName)"),
+            options: .atomic
+        )
+        return PersistedOverlay(
+            id: id,
+            fileName: fileName,
+            width: prepared.dimensions.width,
+            height: prepared.dimensions.height,
+            sourceFileName: sourceFileName,
+            sourceWidth: source.dimensions.width,
+            sourceHeight: source.dimensions.height,
+            crop: crop,
+            canvasAspect: 3.0 / 4.0,
+            addedAt: addedAt
+        )
+    }
+
+    func updateOverlayCrop(
+        sourceFileName: String?,
+        outputFileName: String,
+        crop: NormalizedCrop
+    ) async throws -> (width: Int, height: Int) {
+        let outputURL = documentsURL.appending(path: "overlays/\(outputFileName)")
+        let sourceURL = sourceFileName.map {
+            documentsURL.appending(path: "overlays/sources/\($0)")
+        } ?? outputURL
+        let data = try Data(contentsOf: sourceURL, options: .mappedIfSafe)
+        let prepared = try renderCroppedJPEG(data, crop: crop, maxPixel: 2048, quality: 0.94)
+        try prepared.data.write(to: outputURL, options: .atomic)
+        await LocalImageLoader.shared.invalidate(url: outputURL)
+        return prepared.dimensions
     }
 
     func restoreOverlay(from ghost: ShotGhostReference) throws -> PersistedOverlay {
@@ -106,6 +203,11 @@ actor ImageStore {
             fileName: fileName,
             width: ghost.width,
             height: ghost.height,
+            sourceFileName: nil,
+            sourceWidth: nil,
+            sourceHeight: nil,
+            crop: .full,
+            canvasAspect: 3.0 / 4.0,
             addedAt: .now
         )
     }
@@ -138,6 +240,9 @@ actor ImageStore {
 
     func deleteOverlay(_ record: OverlayRecord) {
         try? fileManager.removeItem(at: documentsURL.appending(path: "overlays/\(record.fileName)"))
+        if let sourceFileName = record.sourceFileName {
+            try? fileManager.removeItem(at: documentsURL.appending(path: "overlays/sources/\(sourceFileName)"))
+        }
     }
 
     nonisolated func shotOriginalURL(_ record: ShotRecord) -> URL {
@@ -157,6 +262,20 @@ actor ImageStore {
         documentURL.appending(path: "overlays/\(record.fileName)")
     }
 
+    nonisolated func overlayFileExists(named fileName: String) -> Bool {
+        let url = documentURL.appending(path: "overlays/\(fileName)")
+        guard
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let size = attributes[.size] as? NSNumber
+        else { return false }
+        return size.intValue > 0
+    }
+
+    nonisolated func overlaySourceURL(_ record: OverlayRecord) -> URL {
+        guard let sourceFileName = record.sourceFileName else { return overlayURL(record) }
+        return documentURL.appending(path: "overlays/sources/\(sourceFileName)")
+    }
+
     nonisolated func customStickerURL(_ record: CustomStickerRecord) -> URL {
         documentURL.appending(path: "stickers/\(record.fileName)")
     }
@@ -165,20 +284,18 @@ actor ImageStore {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    private func imageDimensions(_ data: Data) -> (width: Int, height: Int)? {
-        guard
-            let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-            let width = properties[kCGImagePropertyPixelWidth] as? Int,
-            let height = properties[kCGImagePropertyPixelHeight] as? Int
-        else { return nil }
-        return (width, height)
+    private func prepareThreeByFourCapture(
+        _ data: Data,
+        normalizedCrop: NormalizedCrop
+    ) throws -> (data: Data, dimensions: (width: Int, height: Int)) {
+        try renderCroppedJPEG(data, crop: normalizedCrop, maxPixel: nil, quality: 0.97)
     }
 
-    private func prepareThreeByFourCapture(
-        _ data: Data
+    private func renderOrientedJPEG(
+        _ data: Data,
+        maxPixel: Int?,
+        quality: Double
     ) throws -> (data: Data, dimensions: (width: Int, height: Int)) {
-        let captureAspect = 3.0 / 4.0
         guard
             let source = CGImageSourceCreateWithData(
                 data as CFData,
@@ -189,22 +306,62 @@ actor ImageStore {
             let rawHeight = properties[kCGImagePropertyPixelHeight] as? Int
         else { throw StoreError.invalidImage }
 
-        let orientation = (properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue ?? 1
-        let swapsAxes = (5...8).contains(orientation)
-        let orientedWidth = swapsAxes ? rawHeight : rawWidth
-        let orientedHeight = swapsAxes ? rawWidth : rawHeight
-        let ratio = Double(orientedWidth) / Double(max(1, orientedHeight))
-
-        // Native iPhone stills are normally already 3:4. Keep their original
-        // bytes and metadata when possible; only center-crop unusual formats.
-        if abs(ratio - captureAspect) < 0.002 {
-            return (data, (orientedWidth, orientedHeight))
-        }
-
+        let sourceMaxPixel = max(rawWidth, rawHeight)
+        let outputMaxPixel = min(sourceMaxPixel, maxPixel ?? sourceMaxPixel)
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(rawWidth, rawHeight),
+            kCGImageSourceThumbnailMaxPixelSize: outputMaxPixel,
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let orientedImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            throw StoreError.invalidImage
+        }
+
+        guard let jpeg = encodeJPEG(orientedImage, quality: quality) else {
+            throw StoreError.cannotCreateJPEG
+        }
+        return (jpeg, (orientedImage.width, orientedImage.height))
+    }
+
+    private func imageDimensions(_ data: Data) throws -> (width: Int, height: Int) {
+        guard
+            let source = CGImageSourceCreateWithData(
+                data as CFData,
+                [kCGImageSourceShouldCache: false] as CFDictionary
+            ),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int
+        else { throw StoreError.invalidImage }
+        return (width, height)
+    }
+
+    private func renderCroppedJPEG(
+        _ data: Data,
+        crop: NormalizedCrop,
+        maxPixel: Int?,
+        quality: Double
+    ) throws -> (data: Data, dimensions: (width: Int, height: Int)) {
+        guard
+            let source = CGImageSourceCreateWithData(
+                data as CFData,
+                [kCGImageSourceShouldCache: false] as CFDictionary
+            ),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let rawWidth = properties[kCGImagePropertyPixelWidth] as? Int,
+            let rawHeight = properties[kCGImagePropertyPixelHeight] as? Int
+        else { throw StoreError.invalidImage }
+
+        let orientationRawValue = (properties[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value ?? 1
+        let orientation = CGImagePropertyOrientation(rawValue: orientationRawValue) ?? .up
+
+        let sourceMaxPixel = max(rawWidth, rawHeight)
+        let outputMaxPixel = min(sourceMaxPixel, maxPixel ?? sourceMaxPixel)
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: outputMaxPixel,
             kCGImageSourceShouldCacheImmediately: true
         ]
         guard let orientedImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
@@ -213,31 +370,105 @@ actor ImageStore {
 
         let width = orientedImage.width
         let height = orientedImage.height
-        let currentRatio = Double(width) / Double(max(1, height))
-        let cropRect: CGRect
-        if currentRatio > captureAspect {
-            let targetWidth = Int((Double(height) * captureAspect).rounded(.down))
-            cropRect = CGRect(
-                x: CGFloat(width - targetWidth) / 2,
-                y: 0,
-                width: CGFloat(targetWidth),
-                height: CGFloat(height)
-            )
-        } else {
-            let targetHeight = Int((Double(width) / captureAspect).rounded(.down))
-            cropRect = CGRect(
-                x: 0,
-                y: CGFloat(height - targetHeight) / 2,
-                width: CGFloat(width),
-                height: CGFloat(targetHeight)
-            )
-        }
+        let displayedCrop = cropConvertedToDisplayedOrientation(crop, orientation: orientation)
+        let requested = CGRect(
+            x: displayedCrop.x * Double(width),
+            y: displayedCrop.y * Double(height),
+            width: displayedCrop.width * Double(width),
+            height: displayedCrop.height * Double(height)
+        ).intersection(CGRect(x: 0, y: 0, width: width, height: height))
+        let cropRect = threeByFourPixelRect(inside: requested, imageWidth: width, imageHeight: height)
 
         guard
             let cropped = orientedImage.cropping(to: cropRect),
-            let jpeg = encodeJPEG(cropped, quality: 0.97)
+            let jpeg = encodeJPEG(cropped, quality: quality)
         else { throw StoreError.cannotCreateJPEG }
         return (jpeg, (cropped.width, cropped.height))
+    }
+
+    /// Preview-layer metadata coordinates describe the camera's unrotated
+    /// picture. ImageIO applies the EXIF orientation while decoding, so the
+    /// same crop must be rotated/mirrored before it is applied to those pixels.
+    private func cropConvertedToDisplayedOrientation(
+        _ crop: NormalizedCrop,
+        orientation: CGImagePropertyOrientation
+    ) -> NormalizedCrop {
+        switch orientation {
+        case .up:
+            crop
+        case .upMirrored:
+            NormalizedCrop(x: 1 - crop.x - crop.width, y: crop.y, width: crop.width, height: crop.height)
+        case .down:
+            NormalizedCrop(
+                x: 1 - crop.x - crop.width,
+                y: 1 - crop.y - crop.height,
+                width: crop.width,
+                height: crop.height
+            )
+        case .downMirrored:
+            NormalizedCrop(x: crop.x, y: 1 - crop.y - crop.height, width: crop.width, height: crop.height)
+        case .leftMirrored:
+            NormalizedCrop(x: crop.y, y: crop.x, width: crop.height, height: crop.width)
+        case .right:
+            NormalizedCrop(x: 1 - crop.y - crop.height, y: crop.x, width: crop.height, height: crop.width)
+        case .rightMirrored:
+            NormalizedCrop(
+                x: 1 - crop.y - crop.height,
+                y: 1 - crop.x - crop.width,
+                width: crop.height,
+                height: crop.width
+            )
+        case .left:
+            NormalizedCrop(x: crop.y, y: 1 - crop.x - crop.width, width: crop.height, height: crop.width)
+        }
+    }
+
+    private func centeredThreeByFourCrop(
+        width: Int,
+        height: Int,
+        center: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    ) -> NormalizedCrop {
+        let sourceAspect = Double(width) / Double(max(1, height))
+        let targetAspect = 3.0 / 4.0
+        let cropWidth: Double
+        let cropHeight: Double
+        if sourceAspect > targetAspect {
+            cropWidth = targetAspect / sourceAspect
+            cropHeight = 1
+        } else {
+            cropWidth = 1
+            cropHeight = sourceAspect / targetAspect
+        }
+        let x = min(1 - cropWidth, max(0, Double(center.x) - cropWidth / 2))
+        let y = min(1 - cropHeight, max(0, Double(center.y) - cropHeight / 2))
+        return NormalizedCrop(x: x, y: y, width: cropWidth, height: cropHeight)
+    }
+
+    private func threeByFourPixelRect(
+        inside requested: CGRect,
+        imageWidth: Int,
+        imageHeight: Int
+    ) -> CGRect {
+        let bounds = CGRect(x: 0, y: 0, width: imageWidth, height: imageHeight)
+        var rect = requested.isNull || requested.isEmpty ? bounds : requested.intersection(bounds)
+        let targetAspect = 3.0 / 4.0
+        if rect.width / max(1, rect.height) > targetAspect {
+            let targetWidth = rect.height * targetAspect
+            rect.origin.x += (rect.width - targetWidth) / 2
+            rect.size.width = targetWidth
+        } else {
+            let targetHeight = rect.width / targetAspect
+            rect.origin.y += (rect.height - targetHeight) / 2
+            rect.size.height = targetHeight
+        }
+
+        let targetWidth = max(3, Int(rect.width.rounded(.down)) / 3 * 3)
+        let targetHeight = max(4, targetWidth / 3 * 4)
+        let maxX = max(0, imageWidth - targetWidth)
+        let maxY = max(0, imageHeight - targetHeight)
+        let x = min(maxX, max(0, Int(rect.midX.rounded()) - targetWidth / 2))
+        let y = min(maxY, max(0, Int(rect.midY.rounded()) - targetHeight / 2))
+        return CGRect(x: x, y: y, width: targetWidth, height: targetHeight)
     }
 
     private func downsampleJPEG(_ data: Data, maxPixel: Int, quality: Double) -> Data? {
@@ -249,14 +480,6 @@ actor ImageStore {
             kCGImageSourceShouldCacheImmediately: true
         ]
         guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
-        return encodeJPEG(image, quality: quality)
-    }
-
-    private func transcodeJPEG(_ data: Data, quality: Double) -> Data? {
-        guard
-            let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary),
-            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
-        else { return nil }
         return encodeJPEG(image, quality: quality)
     }
 

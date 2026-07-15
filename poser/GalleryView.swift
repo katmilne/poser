@@ -86,8 +86,6 @@ struct GalleryView: View {
                 if let shot = confirmsDelete { delete(shot) }
             }
             Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("The Camera Roll copy stays put.")
         }
         .alert("Album", isPresented: Binding(
             get: { saveMessage != nil },
@@ -195,6 +193,11 @@ struct GalleryView: View {
                     addedAt: restored.addedAt,
                     width: restored.width,
                     height: restored.height,
+                    sourceFileName: restored.sourceFileName,
+                    sourceWidth: restored.sourceWidth,
+                    sourceHeight: restored.sourceHeight,
+                    crop: restored.crop,
+                    canvasAspect: restored.canvasAspect,
                     lastUsedAt: .now
                 )
                 modelContext.insert(overlay)
@@ -312,8 +315,6 @@ private struct PhotoPocket: View {
         .confirmationDialog("Delete this photo from POSER?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive, action: onDelete)
             Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("The Camera Roll copy stays put.")
         }
     }
 }

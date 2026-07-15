@@ -188,10 +188,10 @@ full-screen covers/sheets). Root gate: if not onboarded → Onboarding.
 | `gallery` | full-screen cover | **Album** — slip-in photo album of shots |
 | `poses` | sheet/modal | **Pose library** — manage & pick pose references |
 
-Global: light status bar on camera, dark elsewhere; portrait only. **Every
-photo surface and the viewfinder are locked to 3:4** (`VIEWPORT_ASPECT = 3/4`,
-the iPhone portrait sensor shape) so the preview shows exactly what the capture
-saves.
+Global: light status bar on camera, dark elsewhere; portrait only. The **saved
+photo, pose crop, album print, and editor canvas are locked to 3:4**
+(`VIEWPORT_ASPECT = 3/4`). The live camera preview remains full-screen; thin
+corner markers identify the exact 3:4 sensor region that capture saves.
 
 ---
 
@@ -199,7 +199,9 @@ saves.
 
 ### 1. Camera (`src/app/index.tsx`) — the heart of the app
 
-Full-bleed 3:4 camera preview with floating glass chrome over it.
+Full-screen, edge-to-edge camera preview with floating glass chrome over it.
+A centered 3:4 capture guide marks the exact mapped output crop; live camera
+content remains visible outside the guide.
 
 **Top bar:** a "POSER" wordmark in a glass pill (left); flash toggle
 (off→auto→on, `bolt.slash`/`bolt`) and self-timer toggle (0→3→10s, `timer`) as
@@ -218,20 +220,18 @@ appears inside the panel.
 - Tapping a thumb **cycles**: select as ghost → tap again mirrors/flips it →
   tap again removes it from the viewfinder. The active thumb has an ink border;
   flipped thumbs render mirrored.
-- Long-press a thumb → confirm-delete (original stays in Photos).
+- Long-press a thumb → confirm-delete.
 
-**Ghost overlay** (`ghost-overlay.tsx`) — the selected pose image drawn
-**cover-fit** across the viewport (so no empty bands regardless of aspect),
-semi-transparent at the user's chosen opacity. It is manipulable directly on
-the viewfinder:
-- **Pan** (1 finger) — move it, clamped to ±60% of viewport.
-- **Pinch** — scale it, clamped 0.4×–2.5× of the base cover-fit size.
+**Ghost overlay** (`ghost-overlay.tsx`) — the selected pose's authored 3:4 crop
+drawn semi-transparent inside, and clipped to, the 3:4 capture guide. It starts
+centered at 1× and fills the guide exactly. It is manipulable directly inside
+the capture area:
+- **Pan** (1 finger) — move it, clamped to ±60% of the capture area.
+- **Pinch** — scale it, clamped 0.4×–2.5× of the base size.
 - **Double-tap** — snap back to default position/scale, with a **medium impact
   haptic**.
 - Horizontal flip via the ref-strip tap-cycle (mirrored state).
-- The overlay is **non-interactive to touches itself**; gestures are attached
-  to the viewport around it. It ignores capture — hidden at shutter time via
-  opacity only.
+- It ignores capture — hidden at shutter time via opacity only.
 
 **Capture flow** (get this exactly right — see AGENTS.md notes):
 1. Guard against double-fire (a synchronous busy lock).
@@ -240,8 +240,9 @@ the viewfinder:
    second.
 3. Fire a **medium impact haptic**, hide the ghost overlay (opacity only —
    **never pause the preview**).
-4. Capture a clean full-resolution still via `AVCapturePhotoOutput`
-   (front camera output should be **mirrored** to match the mirrored preview).
+4. Capture a clean full-resolution still via `AVCapturePhotoOutput`, map the
+   on-screen guide through `AVCaptureVideoPreviewLayer`, and crop to that exact
+   visible sensor region at 3:4 (front output is **mirrored** to match preview).
 5. Save the clean file into app-local storage (`shots/`), index it, and
    navigate to the **preview/edit** screen.
 6. **After** the transition (off the critical path), copy the photo to the
@@ -275,9 +276,10 @@ onboarded flag (see settings).
 A 2-column image-first board of the user's pose references over SkyBackground.
 - First tile is always **"Add pose · From Photos"** — opens the system photo
   picker (`PHPickerViewController`, multi-select, ordered). Picked images are
-  copied into app-local `overlays/`.
+  downsampled into app-local source copies. A sequential **Frame Your Pose**
+  pass lets the user drag/pinch a non-destructive 3:4 crop before tagging.
 - Each pose tile: tap → select it as the camera ghost and return to camera;
-  long-press → action sheet (Edit tags / Delete).
+  long-press → action sheet (Reframe pose / Edit tags / Delete).
 - **Tag filter rail**: two tag groups — "Who is posing?" (Solo/Duo/Group) and
   "What is the vibe?" (Cute/Cool/Silly). An "All" chip clears filters. Filters
   are ANDed. Chips are compact glass text buttons.
@@ -319,8 +321,8 @@ It's a **real slip-in photo album** metaphor:
   or the close button slides it **back into its exact origin pocket** (only if
   it's still the same photo that was opened — otherwise it just shrinks away in
   place).
-- **Long-press** a photo → confirm delete (only the in-app copy; the camera
-  roll keeps its own). Fires a wiggle animation + medium impact.
+- **Long-press** a photo → confirm deleting the photo from POSER. Fires a
+  wiggle animation + medium impact.
 
 **Lightbox chrome:** a footer with close (`xmark`), edit (`wand.and.sparkles`),
 save-to-camera-roll (`square.and.arrow.down`), a counter, and delete (`trash`).
@@ -416,7 +418,9 @@ Directory layout (under `Documents/`):
   downscaled display copies. `shots/decorated/<id>-decorated-<ts>.jpg` —
   flattened decorated previews. `shots/ghosts/<id>.<ext>` — preserved pose
   reference for each shot.
-- `overlays/<id>.<ext>` — imported pose reference images.
+- `overlays/<id>.jpg` — fast rendered 3:4 pose crops.
+  `overlays/sources/<id>-source.jpg` — retained, oriented, downsampled sources
+  used for later non-destructive reframing.
 - `stickers/<id>.png` — custom subject-cutout stickers (transparent PNG).
 - The four RN index files (`shots.json`, `overlays.json`, `stickers.json`,
   `settings.json`) are **replaced by SwiftData `@Model` types** — one model per
@@ -436,8 +440,10 @@ it as a `Codable` array attribute on the shot's edit model, not its own table):
 - **ShotSticker** (serializable, normalized): `key, stickerId, customStickerId?,
   imageAspectRatio?, flipped?, text?, cx, cy, offsetX?, offsetY?, scale?,
   rotation?`.
-- **OverlayRecord** (pose): `id, fileName, addedAt, width, height, tags[],
-  lastUsedAt?`. Newest-first; `listRecentOverlays` returns those with a
+- **OverlayRecord** (pose): `id, fileName, sourceFileName?, addedAt, width,
+  height, sourceWidth?, sourceHeight?, crop {x,y,width,height}?, canvasAspect,
+  tags[], lastUsedAt?`. Crop values are normalized to the retained source.
+  Newest-first; `listRecentOverlays` returns those with a
   `lastUsedAt`, most-recent first (drives the camera ref-strip).
 - **CustomStickerRecord**: `id, fileName, createdAt, width, height`.
 - **Settings**: `{ onboarded?: bool }`.
@@ -455,6 +461,8 @@ the RN one-shot cache.
 - `AVCaptureSession` with a `AVCapturePhotoOutput`, 3:4 still capture, a
   SwiftUI preview layer (`AVCaptureVideoPreviewLayer` via
   `UIViewRepresentable`, or the newer SwiftUI camera preview APIs).
+- The preview is full-screen `resizeAspectFill`; convert the 3:4 guide rect
+  through the preview layer and use that normalized region for the still crop.
 - Front/back switching, flash on/auto/off, mirror the front-camera output to
   match the mirrored preview.
 - Full-resolution clean stills — no screenshots, ever.
