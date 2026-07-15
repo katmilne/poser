@@ -277,11 +277,11 @@ private struct PhotoPocket: View {
             LocalFileImage(url: ImageStore.shared.shotDisplayURL(shot), maxPixel: 800)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
-                .matchedGeometryEffect(id: shot.id, in: namespace)
+                .matchedGeometryEffect(id: shot.id, in: namespace, isSource: !hiddenForLightbox)
                 .offset(y: pullY)
                 .opacity(hiddenForLightbox ? 0 : 1)
                 .gesture(
-                    DragGesture(minimumDistance: 6)
+                    DragGesture(minimumDistance: 0)
                         .onChanged { value in
                             pullY = min(0, value.translation.height)
                             let crossed = pullY < -90
@@ -291,7 +291,8 @@ private struct PhotoPocket: View {
                             }
                         }
                         .onEnded { value in
-                            if pullY < -90 || value.predictedEndTranslation.height < -140 {
+                            let isTap = abs(value.translation.width) < 10 && abs(value.translation.height) < 10
+                            if isTap || pullY < -90 || value.predictedEndTranslation.height < -140 {
                                 pullY = 0
                                 onOpen()
                             } else {
@@ -311,7 +312,6 @@ private struct PhotoPocket: View {
                 .stroke(Color.white.opacity(0.88), lineWidth: 1)
         }
         .contentShape(.rect)
-        .onTapGesture(perform: onOpen)
         .contextMenu {
             Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
         }
@@ -375,7 +375,7 @@ private struct AlbumLightbox: View {
                 ForEach(shots) { item in
                     LocalFileImage(url: ImageStore.shared.shotDisplayURL(item), maxPixel: 1800)
                         .aspectRatio(Theme.viewportAspect, contentMode: .fit)
-                        .matchedGeometryEffect(id: item.id, in: namespace, isSource: false)
+                        .matchedGeometryEffect(id: item.id, in: namespace, isSource: item.id == shot.id)
                         .tag(item.id)
                 }
             }
