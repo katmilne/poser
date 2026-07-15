@@ -97,7 +97,34 @@ struct GalleryView: View {
             } message: {
                 Text(saveMessage ?? "")
             }
+            .task { seedTempTestShotsIfNeeded() }
         }
+    }
+
+    // TEMP-TESTING: seeds fake shots so gestures/visuals can be verified in the simulator (no camera). Remove before shipping.
+    private func seedTempTestShotsIfNeeded() {
+        guard shots.isEmpty else { return }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let shotsDir = docs.appending(path: "shots")
+        let displayDir = shotsDir.appending(path: "display")
+        try? FileManager.default.createDirectory(at: displayDir, withIntermediateDirectories: true)
+        let colors: [UIColor] = [.systemRed, .systemBlue, .systemGreen]
+        for color in colors {
+            let id = UUID().uuidString.lowercased()
+            let fileName = "\(id).jpg"
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 800))
+            let image = renderer.image { ctx in
+                color.setFill()
+                ctx.fill(CGRect(x: 0, y: 0, width: 600, height: 800))
+            }
+            if let data = image.jpegData(compressionQuality: 0.9) {
+                try? data.write(to: shotsDir.appending(path: fileName))
+                try? data.write(to: displayDir.appending(path: fileName))
+            }
+            let record = ShotRecord(id: id, fileName: fileName, facing: .back, width: 600, height: 800)
+            modelContext.insert(record)
+        }
+        try? modelContext.save()
     }
 
     private var albumBackground: some View {
@@ -276,7 +303,7 @@ private struct PhotoPocket: View {
                 .fill(Theme.Colors.linen)
             LocalFileImage(url: ImageStore.shared.shotDisplayURL(shot), maxPixel: 800)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .matchedGeometryEffect(id: shot.id, in: namespace, isSource: !hiddenForLightbox)
                 .offset(y: pullY)
                 .opacity(hiddenForLightbox ? 0 : 1)
@@ -302,11 +329,8 @@ private struct PhotoPocket: View {
                             crossedThreshold = false
                         }
                 )
-            PocketGlare()
-                .allowsHitTesting(false)
         }
         .aspectRatio(Theme.viewportAspect, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(Color.white.opacity(0.88), lineWidth: 1)
@@ -318,23 +342,6 @@ private struct PhotoPocket: View {
         .confirmationDialog("Delete this photo from POSER?", isPresented: $confirmsDelete) {
             Button("Delete", role: .destructive, action: onDelete)
             Button("Cancel", role: .cancel) { }
-        }
-    }
-}
-
-private struct PocketGlare: View {
-    var body: some View {
-        ZStack {
-            LinearGradient(
-                colors: [.white.opacity(0.32), .clear, .white.opacity(0.12)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            Capsule()
-                .fill(.white.opacity(0.34))
-                .frame(width: 3, height: 46)
-                .rotationEffect(.degrees(30))
-                .offset(x: 42, y: -52)
         }
     }
 }
