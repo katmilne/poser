@@ -437,6 +437,8 @@ private struct PlacedStickerView: View {
     let onSelect: () -> Void
     let onChange: (ShotSticker) -> Void
     @State private var dragStart: CGPoint?
+    @State private var scaleStart: Double?
+    @State private var rotationStart: Double?
 
     var body: some View {
         let base = canvasSize.width * 0.22
@@ -470,20 +472,25 @@ private struct PlacedStickerView: View {
             )
             .simultaneousGesture(
                 MagnifyGesture()
+                    .simultaneously(with: RotateGesture())
                     .onChanged { value in
                         guard editable else { return }
                         var next = sticker
-                        next.scale = min(4, max(0.3, (sticker.scale ?? 1) * value.magnification))
+                        if let magnify = value.first {
+                            let start = scaleStart ?? (sticker.scale ?? 1)
+                            if scaleStart == nil { scaleStart = start }
+                            next.scale = min(4, max(0.3, start * magnify.magnification))
+                        }
+                        if let rotate = value.second {
+                            let start = rotationStart ?? (sticker.rotation ?? 0)
+                            if rotationStart == nil { rotationStart = start }
+                            next.rotation = start + rotate.rotation.degrees
+                        }
                         onChange(next)
                     }
-            )
-            .simultaneousGesture(
-                RotateGesture()
-                    .onChanged { value in
-                        guard editable else { return }
-                        var next = sticker
-                        next.rotation = (sticker.rotation ?? 0) + value.rotation.degrees
-                        onChange(next)
+                    .onEnded { _ in
+                        scaleStart = nil
+                        rotationStart = nil
                     }
             )
     }
