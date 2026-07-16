@@ -272,14 +272,15 @@ private struct PoseLibraryTile: View {
 
             Button(action: onFavorite) {
                 GlassSurface(
-                    cornerRadius: 18,
-                    tint: Theme.Colors.black.opacity(0.14),
+                    cornerRadius: 22,
+                    tint: overlay.isFavorite ? Theme.Colors.glassSelected : Theme.Colors.black.opacity(0.14),
                     interactive: true
                 ) {
                     Image(systemName: overlay.isFavorite ? "heart.fill" : "heart")
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundStyle(overlay.isFavorite ? Color.white : Theme.Colors.ink)
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundStyle(overlay.isFavorite ? Theme.Colors.recRed : Theme.Colors.ink)
+                        .frame(width: 44, height: 44)
+                        .contentShape(.circle)
                 }
             }
             .buttonStyle(PressScaleButtonStyle())
