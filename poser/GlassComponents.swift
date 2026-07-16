@@ -106,20 +106,27 @@ struct GlassTextButton: View {
         Button(action: action) {
             GlassSurface(
                 cornerRadius: Theme.Radius.pill,
-                tint: selected ? Theme.Colors.glassSelected : .clear,
+                tint: selected ? Theme.Colors.glassSelectedStrong : .clear,
                 interactive: true
             ) {
                 Text(title)
-                    .font(.system(size: compact ? 13 : 15, weight: .bold))
+                    .font(.system(size: compact ? 13 : 15, weight: selected ? .heavy : .bold))
                     .tracking(0.4)
                     .foregroundStyle(disabled ? Theme.Colors.disabled : Theme.Colors.ink)
                     .padding(.horizontal, compact ? 14 : 20)
                     .frame(minWidth: minWidth)
                     .frame(height: compact ? 36 : 48)
             }
+            .overlay {
+                if selected {
+                    Capsule(style: .continuous)
+                        .strokeBorder(Theme.Colors.glassSelectedEdge, lineWidth: 1.5)
+                }
+            }
         }
         .buttonStyle(PressScaleButtonStyle())
         .disabled(disabled)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
         .sensoryFeedback(.selection, trigger: selected)
     }
 }

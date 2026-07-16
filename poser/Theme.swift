@@ -24,6 +24,8 @@ enum Theme {
         static let disabled = Color(hex: 0x111318).opacity(0.24)
         static let outline = Color(hex: 0x111318).opacity(0.12)
         static let glassSelected = Color(hex: 0xDBE9F8).opacity(0.34)
+        static let glassSelectedStrong = Color(hex: 0x7C9CB9).opacity(0.32)
+        static let glassSelectedEdge = Color.white.opacity(0.95)
         static let glassEdge = Color.white.opacity(0.72)
         static let glassFallback = Color.white.opacity(0.76)
     }
