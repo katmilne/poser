@@ -8,11 +8,14 @@ struct PreviewEditorView: View {
     @Query(sort: \CustomStickerRecord.createdAt, order: .reverse) private var customStickers: [CustomStickerRecord]
 
     let shot: ShotRecord
+    /// Only the capture route needs these: it opens straight from the shutter with
+    /// nothing behind it. From the album, the lightbox already carries share/save,
+    /// so the editor stays a pure decorating surface.
+    var showsExportActions = true
     @State private var sourceImage: UIImage?
     @State private var frameID: String?
     @State private var stickers: [ShotSticker]
     @State private var selectedStickerID: String?
-    @State private var showsTools = false
     @State private var selectedPack = StickerPack.own
     @State private var noteText = ""
     @State private var showsNoteEntry = false
@@ -22,14 +25,25 @@ struct PreviewEditorView: View {
     @State private var alertMessage: String?
     @State private var isRendering = false
 
-    init(shot: ShotRecord) {
+    init(shot: ShotRecord, showsExportActions: Bool = true) {
         self.shot = shot
+        self.showsExportActions = showsExportActions
         let edits = shot.edits
         _frameID = State(initialValue: edits?.frameId)
         _stickers = State(initialValue: edits?.stickers ?? [])
     }
 
     private var isDecorated: Bool { frameID != nil || !stickers.isEmpty }
+
+    /// The composite is laid out in points at roughly the size the editor shows
+    /// it, and only then scaled up to the 1536×2048 export. Handing the renderer
+    /// the pixel size directly would keep every fixed-point detail inside the
+    /// canvas — the frame's 20pt border inset, the digicam trim, sticker
+    /// shadows — at its literal size against a canvas four times wider, which
+    /// pushes the frame marks so close to the edge that half of each is clipped
+    /// away and the photo reads as cropped in.
+    private static let exportCanvas = CGSize(width: 384, height: 384 / Theme.viewportAspect)
+    private static let exportScale: CGFloat = 4
 
     var body: some View {
         ZStack {
@@ -68,17 +82,18 @@ struct PreviewEditorView: View {
                         stickerSelectionBar(selectedStickerID)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
-                    if showsTools {
-                        toolsTray
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                    }
+                    toolsTray
                 }
                 .animation(.poserGlide, value: selectedStickerID)
-                .animation(.poserGlide, value: showsTools)
+                // Without the action row beneath it the tray is the last thing in the
+                // stack, so it needs the bottom breathing room the row used to give.
+                .padding(.bottom, showsExportActions ? 0 : 12)
 
-                actionRow
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 12)
+                if showsExportActions {
+                    actionRow
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 12)
+                }
             }
 
             if isRendering {
@@ -147,15 +162,10 @@ struct PreviewEditorView: View {
 
     private var actionRow: some View {
         GlassGroup(spacing: 18) {
-            HStack {
-                GlassIconButton(symbol: "wand.and.sparkles", accessibilityLabel: "Toggle editing tools", selected: showsTools) {
-                    withAnimation(.poserGlide) { showsTools.toggle() }
-                }
-                Spacer()
+            HStack(spacing: 18) {
                 GlassIconButton(symbol: "square.and.arrow.up", accessibilityLabel: "Share photo") {
                     Task { await share() }
                 }
-                Spacer()
                 GlassIconButton(
                     symbol: "square.and.arrow.down",
                     accessibilityLabel: "Save decorated photo",
@@ -413,7 +423,6 @@ struct PreviewEditorView: View {
                 customStickerImages[id] = image
             }
         }
-        let exportSize = CGSize(width: 1536, height: 2048)
         let renderer = ImageRenderer(content: CompositeCanvas(
             image: sourceImage,
             frameID: frameID,
@@ -424,9 +433,9 @@ struct PreviewEditorView: View {
             customStickerImages: customStickerImages,
             onSelect: { _ in },
             onChange: { _ in }
-        ).frame(width: exportSize.width, height: exportSize.height))
-        renderer.scale = 1
-        renderer.proposedSize = ProposedViewSize(exportSize)
+        ).frame(width: Self.exportCanvas.width, height: Self.exportCanvas.height))
+        renderer.scale = Self.exportScale
+        renderer.proposedSize = ProposedViewSize(Self.exportCanvas)
         return renderer.uiImage?.jpegData(compressionQuality: 0.92)
     }
 
