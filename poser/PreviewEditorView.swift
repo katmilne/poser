@@ -13,6 +13,7 @@ struct PreviewEditorView: View {
     @State private var stickers: [ShotSticker]
     @State private var selectedStickerID: String?
     @State private var showsTools = false
+    @State private var selectedPack = StickerPack.own
     @State private var noteText = ""
     @State private var showsNoteEntry = false
     @State private var showsStickerMaker = false
@@ -48,6 +49,7 @@ struct PreviewEditorView: View {
                                 editable: true,
                                 customStickerURLs: customStickerURLs,
                                 onSelect: { selectedStickerID = $0 },
+                                onDeselect: { selectedStickerID = nil },
                                 onChange: updateSticker
                             )
                             .frame(width: canvasSize.width, height: canvasSize.height)
@@ -60,13 +62,18 @@ struct PreviewEditorView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                if let selectedStickerID {
-                    stickerSelectionBar(selectedStickerID)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if showsTools {
-                    toolsTray
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                VStack(spacing: 10) {
+                    if let selectedStickerID {
+                        stickerSelectionBar(selectedStickerID)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    if showsTools {
+                        toolsTray
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
                 }
+                .animation(.poserGlide, value: selectedStickerID)
+                .animation(.poserGlide, value: showsTools)
 
                 actionRow
                     .padding(.horizontal, 20)
@@ -128,10 +135,7 @@ struct PreviewEditorView: View {
         GlassGroup(spacing: 18) {
             HStack {
                 GlassIconButton(symbol: "wand.and.sparkles", accessibilityLabel: "Toggle editing tools", selected: showsTools) {
-                    withAnimation(.poserGlide) {
-                        selectedStickerID = nil
-                        showsTools.toggle()
-                    }
+                    withAnimation(.poserGlide) { showsTools.toggle() }
                 }
                 Spacer()
                 GlassIconButton(symbol: "square.and.arrow.up", accessibilityLabel: "Share photo") {
@@ -172,66 +176,96 @@ struct PreviewEditorView: View {
                     .tracking(1.5)
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
-                        Button { showsNoteEntry = true } label: {
-                            StickerGlyph(id: "note", text: "Aa")
-                                .frame(width: 54, height: 54)
-                        }
-                        .buttonStyle(PressScaleButtonStyle())
-                        Button { showsStickerMaker = true } label: {
-                            VStack(spacing: 2) {
-                                Image(systemName: "person.crop.rectangle.badge.plus")
-                                    .font(.system(size: 22, weight: .semibold))
-                                Text("MAKE")
-                                    .font(.system(size: 8, weight: .black))
+                        ForEach(StickerPack.allCases) { pack in
+                            GlassTextButton(title: pack.title, compact: true, selected: selectedPack == pack) {
+                                withAnimation(.poserGlide) { selectedPack = pack }
                             }
-                            .foregroundStyle(Theme.Colors.ink)
-                            .frame(width: 54, height: 54)
-                            .background(Theme.Colors.cyan, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-                        }
-                        .buttonStyle(PressScaleButtonStyle())
-                        ForEach(customStickers) { custom in
-                            Button { addCustomSticker(custom) } label: {
-                                StickerGlyph(id: "custom", customURL: ImageStore.shared.customStickerURL(custom))
-                                    .frame(width: 54, height: 54)
-                            }
-                            .buttonStyle(PressScaleButtonStyle())
-                        }
-                        ForEach(StickerCatalog.all, id: \.id) { item in
-                            Button { addSticker(item.id) } label: {
-                                StickerGlyph(id: item.id)
-                                    .frame(width: 54, height: 54)
-                            }
-                            .buttonStyle(PressScaleButtonStyle())
-                            .accessibilityLabel("Add \(item.title) sticker")
                         }
                     }
                 }
                 .scrollIndicators(.hidden)
+
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        switch selectedPack {
+                        case .own: ownPackItems
+                        case .sample: packItems(StickerCatalog.all)
+                        case .doodle: packItems(DoodleCatalog.all)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .frame(height: 58)
             }
             .padding(14)
         }
         .padding(.horizontal, 14)
     }
 
+    @ViewBuilder
+    private var ownPackItems: some View {
+        Button { showsNoteEntry = true } label: {
+            StickerGlyph(id: "note", text: "Aa")
+                .frame(width: 54, height: 54)
+        }
+        .buttonStyle(PressScaleButtonStyle())
+        .accessibilityLabel("Add a note sticker")
+
+        Button { showsStickerMaker = true } label: {
+            VStack(spacing: 2) {
+                Image(systemName: "person.crop.rectangle.badge.plus")
+                    .font(.system(size: 22, weight: .semibold))
+                Text("MAKE")
+                    .font(.system(size: 8, weight: .black))
+            }
+            .foregroundStyle(Theme.Colors.ink)
+            .frame(width: 54, height: 54)
+            .background(Theme.Colors.cyan, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        }
+        .buttonStyle(PressScaleButtonStyle())
+        .accessibilityLabel("Make a sticker from a photo")
+
+        ForEach(customStickers) { custom in
+            Button { addCustomSticker(custom) } label: {
+                StickerGlyph(id: "custom", customURL: ImageStore.shared.customStickerURL(custom))
+                    .frame(width: 54, height: 54)
+            }
+            .buttonStyle(PressScaleButtonStyle())
+            .accessibilityLabel("Add your sticker")
+        }
+    }
+
+    private func packItems(_ items: [(id: String, title: String)]) -> some View {
+        ForEach(items, id: \.id) { item in
+            Button { addSticker(item.id) } label: {
+                StickerGlyph(id: item.id)
+                    .frame(width: 54, height: 54)
+            }
+            .buttonStyle(PressScaleButtonStyle())
+            .accessibilityLabel("Add \(item.title) sticker")
+        }
+    }
+
     private func stickerSelectionBar(_ id: String) -> some View {
         GlassSurface(cornerRadius: Theme.Radius.pill) {
-            HStack(spacing: 16) {
+            HStack(spacing: 14) {
                 Button("FLIP") {
                     guard let index = stickers.firstIndex(where: { $0.key == id }) else { return }
                     stickers[index].flipped.toggle()
                 }
+                Button("COPY") { duplicateSticker(id) }
                 Button("DELETE", role: .destructive) {
                     stickers.removeAll { $0.key == id }
                     selectedStickerID = nil
                 }
-                Text("PINCH TO RESIZE · TWIST TO ROTATE")
-                    .font(.system(size: 9, weight: .black, design: .monospaced))
-                    .foregroundStyle(Theme.Colors.textDim)
+                Spacer(minLength: 4)
+                Button("DONE") { selectedStickerID = nil }
             }
             .font(.system(size: 12, weight: .black))
-            .padding(.horizontal, 16)
+            .padding(.horizontal, 18)
             .frame(height: 46)
         }
+        .padding(.horizontal, 14)
     }
 
     private var noteEntrySheet: some View {
@@ -303,6 +337,16 @@ struct PreviewEditorView: View {
 
     private var customStickerURLs: [String: URL] {
         Dictionary(uniqueKeysWithValues: customStickers.map { ($0.id, ImageStore.shared.customStickerURL($0)) })
+    }
+
+    private func duplicateSticker(_ id: String) {
+        guard let original = stickers.first(where: { $0.key == id }) else { return }
+        var copy = original
+        copy.key = UUID().uuidString
+        copy.cx = min(1, original.cx + 0.06)
+        copy.cy = min(1, original.cy + 0.06)
+        stickers.append(copy)
+        selectedStickerID = copy.key
     }
 
     private func updateSticker(_ sticker: ShotSticker) {
@@ -405,6 +449,7 @@ private struct CompositeCanvas: View {
     let customStickerURLs: [String: URL]
     var customStickerImages: [String: UIImage] = [:]
     let onSelect: (String) -> Void
+    var onDeselect: () -> Void = { }
     let onChange: (ShotSticker) -> Void
 
     var body: some View {
@@ -415,6 +460,12 @@ private struct CompositeCanvas: View {
                     .aspectRatio(contentMode: .fill)
                     .frame(width: proxy.size.width, height: proxy.size.height)
                     .clipped()
+
+                if editable {
+                    Color.clear
+                        .contentShape(.rect)
+                        .onTapGesture { onDeselect() }
+                }
 
                 if let frameID { DecorativeFrame(id: frameID) }
 
@@ -453,25 +504,39 @@ private struct PlacedStickerView: View {
 
     var body: some View {
         let base = canvasSize.width * 0.22
+        let scale = sticker.scale ?? 1
         StickerGlyph(id: sticker.stickerId, text: sticker.text, customURL: customURL, customImage: customImage)
             .frame(width: base, height: base)
-            .scaleEffect(x: sticker.flipped ? -(sticker.scale ?? 1) : (sticker.scale ?? 1), y: sticker.scale ?? 1)
-            .rotationEffect(.degrees(sticker.rotation ?? 0))
             .overlay {
                 if selected {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Theme.Colors.ink, style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+                    // Drawn inside the transform so the box hugs the rotated
+                    // sticker; the stroke is divided back out to keep a
+                    // constant on-screen weight at any zoom.
+                    RoundedRectangle(cornerRadius: 8 / scale, style: .continuous)
+                        .stroke(
+                            Theme.Colors.ink,
+                            style: StrokeStyle(lineWidth: 2 / scale, dash: [7 / scale, 5 / scale])
+                        )
                 }
             }
-            .position(x: sticker.cx * canvasSize.width, y: sticker.cy * canvasSize.height)
+            // Hit area must be established while the view is still sticker-sized:
+            // `.position` below expands it to fill the canvas, which would make
+            // every sticker swallow gestures meant for the ones beneath it.
             .contentShape(.rect)
+            .scaleEffect(x: sticker.flipped ? -scale : scale, y: scale)
+            .rotationEffect(.degrees(sticker.rotation ?? 0))
+            .position(x: sticker.cx * canvasSize.width, y: sticker.cy * canvasSize.height)
+            .allowsHitTesting(editable)
             .onTapGesture { if editable { onSelect() } }
             .gesture(
                 DragGesture()
                     .onChanged { value in
                         guard editable else { return }
                         let start = dragStart ?? CGPoint(x: sticker.cx, y: sticker.cy)
-                        if dragStart == nil { dragStart = start }
+                        if dragStart == nil {
+                            dragStart = start
+                            if !selected { onSelect() }
+                        }
                         var next = sticker
                         next.cx = min(1, max(0, start.x + value.translation.width / canvasSize.width))
                         next.cy = min(1, max(0, start.y + value.translation.height / canvasSize.height))
@@ -514,6 +579,22 @@ private enum FrameCatalog {
     ]
 }
 
+private enum StickerPack: String, CaseIterable, Identifiable {
+    case own
+    case sample
+    case doodle
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .own: "OWN"
+        case .sample: "SAMPLE"
+        case .doodle: "DOODLE"
+        }
+    }
+}
+
 private enum StickerCatalog {
     static let all = [
         ("star", "Star"), ("sparkle", "Sparkle"), ("heart", "Heart"),
@@ -522,6 +603,18 @@ private enum StickerCatalog {
         ("flower", "Flower"), ("scribble", "Scribble"), ("bubble", "No Bad Angles"),
         ("pin", "Safety Pin"), ("iconic", "Status Iconic")
     ].map { (id: $0.0, title: $0.1) }
+}
+
+/// Hand-drawn ink marks — the whole pack is stroked vector art on a clear
+/// background, so it reads the same over light and dark photos.
+private enum DoodleCatalog {
+    static let all = [
+        ("doodle-heart", "Doodle Heart"), ("doodle-sparkle", "Doodle Sparkle"),
+        ("doodle-sparkle-solid", "Solid Sparkle"), ("doodle-moon", "Doodle Moon"),
+        ("doodle-circle", "Doodle Circle"), ("doodle-dot", "Doodle Dot")
+    ].map { (id: $0.0, title: $0.1) }
+
+    static let ids = Set(all.map(\.id))
 }
 
 private struct StickerGlyph: View {
@@ -556,6 +649,7 @@ private struct StickerGlyph: View {
             case "iconic": stickerText("STATUS:\nICONIC", Theme.Colors.lemon)
             case "note": stickerText(text ?? "Aa", Theme.Colors.cream)
             case "scribble": ScribbleShape().stroke(Theme.Colors.hotPink, lineWidth: 7)
+            case _ where DoodleCatalog.ids.contains(id): DoodleGlyph(id: id)
             default: symbol("sparkles", Theme.Colors.cyan)
             }
         }
@@ -581,6 +675,136 @@ private struct StickerGlyph: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(color, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay { RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(.white, lineWidth: 3) }
+    }
+}
+
+private struct DoodleGlyph: View {
+    let id: String
+
+    var body: some View {
+        switch id {
+        case "doodle-heart": DoodleMark(shape: DoodleHeartShape())
+        case "doodle-sparkle": DoodleMark(shape: DoodleSparkleShape())
+        case "doodle-sparkle-solid": DoodleMark(shape: DoodleSparkleShape(), filled: true, inset: 0.34)
+        case "doodle-moon": DoodleMark(shape: DoodleMoonShape())
+        case "doodle-circle": DoodleMark(shape: Circle(), inset: 0.28)
+        case "doodle-dot": DoodleMark(shape: Circle(), filled: true, inset: 0.40)
+        default: EmptyView()
+        }
+    }
+}
+
+/// Draws a doodle shape at a stroke weight proportional to its rendered size,
+/// so one glyph serves both the 54pt picker and a full-size canvas sticker.
+private struct DoodleMark<S: Shape>: View {
+    let shape: S
+    var filled = false
+    /// Fraction of the frame trimmed off each edge — lets small marks such as
+    /// the dot stay small relative to the shared sticker frame.
+    var inset: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            let lineWidth = max(1.2, side * 0.055)
+            ZStack {
+                if filled {
+                    shape.fill(Theme.Colors.ink)
+                } else {
+                    shape.stroke(
+                        Theme.Colors.ink,
+                        style: StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+                    )
+                }
+            }
+            .padding(side * inset + lineWidth / 2)
+            .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct DoodleHeartShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let w = rect.width
+        let h = rect.height
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.maxY))
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.minY + h * 0.28),
+            control1: CGPoint(x: rect.minX + w * 0.10, y: rect.minY + h * 0.74),
+            control2: CGPoint(x: rect.minX, y: rect.minY + h * 0.50)
+        )
+        path.addCurve(
+            to: CGPoint(x: rect.midX, y: rect.minY + h * 0.24),
+            control1: CGPoint(x: rect.minX + w * 0.04, y: rect.minY),
+            control2: CGPoint(x: rect.minX + w * 0.38, y: rect.minY - h * 0.02)
+        )
+        path.addCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + h * 0.28),
+            control1: CGPoint(x: rect.maxX - w * 0.38, y: rect.minY - h * 0.02),
+            control2: CGPoint(x: rect.maxX - w * 0.04, y: rect.minY)
+        )
+        path.addCurve(
+            to: CGPoint(x: rect.midX, y: rect.maxY),
+            control1: CGPoint(x: rect.maxX, y: rect.minY + h * 0.50),
+            control2: CGPoint(x: rect.maxX - w * 0.10, y: rect.minY + h * 0.74)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+/// Four-point star with concave sides — the sparkle repeated across the pattern.
+private struct DoodleSparkleShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let cx = rect.midX
+        let cy = rect.midY
+        let rx = rect.width / 2
+        let ry = rect.height / 2
+        // Pulls each side in toward the centre; smaller values sharpen the points.
+        let waist: CGFloat = 0.14
+        var path = Path()
+        path.move(to: CGPoint(x: cx, y: cy - ry))
+        path.addQuadCurve(
+            to: CGPoint(x: cx + rx, y: cy),
+            control: CGPoint(x: cx + rx * waist, y: cy - ry * waist)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx, y: cy + ry),
+            control: CGPoint(x: cx + rx * waist, y: cy + ry * waist)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx - rx, y: cy),
+            control: CGPoint(x: cx - rx * waist, y: cy + ry * waist)
+        )
+        path.addQuadCurve(
+            to: CGPoint(x: cx, y: cy - ry),
+            control: CGPoint(x: cx - rx * waist, y: cy - ry * waist)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct DoodleMoonShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let side = min(rect.width, rect.height)
+        let radius = side / 2
+        let disc = Path(ellipseIn: CGRect(
+            x: rect.midX - radius,
+            y: rect.midY - radius,
+            width: side,
+            height: side
+        ))
+        let biteRadius = radius * 0.92
+        let bite = Path(ellipseIn: CGRect(
+            x: rect.midX - biteRadius + radius * 0.54,
+            y: rect.midY - biteRadius,
+            width: biteRadius * 2,
+            height: biteRadius * 2
+        ))
+        return disc.subtracting(bite)
     }
 }
 
