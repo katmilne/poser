@@ -210,6 +210,7 @@ struct PreviewEditorView: View {
                         case .own: ownPackItems
                         case .sample: packItems(StickerCatalog.all)
                         case .doodle: packItems(DoodleCatalog.all)
+                        case .pixel: packItems(PixelCatalog.pickerItems)
                         }
                     }
                 }
@@ -630,6 +631,7 @@ private enum StickerPack: String, CaseIterable, Identifiable {
     case own
     case sample
     case doodle
+    case pixel
 
     var id: String { rawValue }
 
@@ -638,6 +640,7 @@ private enum StickerPack: String, CaseIterable, Identifiable {
         case .own: "OWN"
         case .sample: "SAMPLE"
         case .doodle: "DOODLE"
+        case .pixel: "PIXEL"
         }
     }
 }
@@ -662,6 +665,62 @@ private enum DoodleCatalog {
     ].map { (id: $0.0, title: $0.1) }
 
     static let ids = Set(all.map(\.id))
+}
+
+/// Pixel-art takes on the same marks the doodle pack draws, each offered in ink
+/// and in white so there is a legible choice over both a dark and a pale photo.
+private enum PixelCatalog {
+    enum Tone: String, CaseIterable {
+        case black
+        case white
+
+        var color: Color {
+            switch self {
+            case .black: Theme.Colors.ink
+            case .white: Theme.Colors.cloud
+            }
+        }
+
+        /// A white mark disappears against a pale photo and against the picker's
+        /// own light surface, so it carries an edge shadow that ink doesn't need.
+        var edgeShadow: Color {
+            switch self {
+            case .black: .clear
+            case .white: Theme.Colors.ink.opacity(0.35)
+            }
+        }
+    }
+
+    struct Item {
+        let id: String
+        let title: String
+        let sprite: PixelSprite
+        let tone: Tone
+    }
+
+    private static let shapes: [(slug: String, title: String, sprite: PixelSprite)] = [
+        ("heart", "Heart", .heart), ("sparkle", "Sparkle", .sparkle),
+        ("sparkle-solid", "Solid Sparkle", .sparkleSolid), ("moon", "Moon", .moon),
+        ("circle", "Circle", .circle), ("dot", "Dot", .dot)
+    ]
+
+    /// Tones sit next to each other within a shape so the row reads as pairs.
+    static let all: [Item] = shapes.flatMap { shape in
+        Tone.allCases.map { tone in
+            Item(
+                id: "pixel-\(shape.slug)-\(tone.rawValue)",
+                title: "Pixel \(tone == .white ? "White " : "")\(shape.title)",
+                sprite: shape.sprite,
+                tone: tone
+            )
+        }
+    }
+
+    static let ids = Set(all.map(\.id))
+
+    static let pickerItems = all.map { (id: $0.id, title: $0.title) }
+
+    static func item(_ id: String) -> Item? { all.first { $0.id == id } }
 }
 
 private struct StickerGlyph: View {
@@ -697,6 +756,7 @@ private struct StickerGlyph: View {
             case "note": stickerText(text ?? "Aa", Theme.Colors.cream)
             case "scribble": ScribbleShape().stroke(Theme.Colors.hotPink, lineWidth: 7)
             case _ where DoodleCatalog.ids.contains(id): DoodleGlyph(id: id)
+            case _ where PixelCatalog.ids.contains(id): PixelGlyph(id: id)
             default: symbol("sparkles", Theme.Colors.cyan)
             }
         }
@@ -766,6 +826,142 @@ private struct DoodleMark<S: Shape>: View {
             }
             .padding(side * inset + lineWidth / 2)
             .frame(width: proxy.size.width, height: proxy.size.height)
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+}
+
+private struct PixelGlyph: View {
+    let id: String
+
+    var body: some View {
+        if let item = PixelCatalog.item(id) {
+            PixelMark(sprite: item.sprite, color: item.tone.color)
+                .shadow(color: item.tone.edgeShadow, radius: 2, y: 1)
+        }
+    }
+}
+
+/// A pixel-art mark held as its own ASCII art: `#` is an on pixel, `.` is off.
+private struct PixelSprite {
+    /// Every sprite is centred in a grid this many pixels square, which fixes one
+    /// pixel size for the whole pack: a small mark such as the dot then stays
+    /// small beside the heart instead of being blown up to the same frame.
+    static let field = 16
+
+    let rows: [String]
+
+    var height: Int { rows.count }
+    var width: Int { rows.first?.count ?? 0 }
+}
+
+extension PixelSprite {
+    static let heart = PixelSprite(rows: [
+        "..####...####..",
+        ".#....#.#....#.",
+        "#......#......#",
+        "#.............#",
+        "#.............#",
+        ".#...........#.",
+        "..#.........#..",
+        "...#.......#...",
+        "....#.....#....",
+        ".....#...#.....",
+        "......#.#......",
+        ".......#......."
+    ])
+
+    static let sparkle = PixelSprite(rows: [
+        "......#......",
+        "......#......",
+        "......#......",
+        ".....#.#.....",
+        ".....#.#.....",
+        "..###...###..",
+        "##.........##",
+        "..###...###..",
+        ".....#.#.....",
+        ".....#.#.....",
+        "......#......",
+        "......#......",
+        "......#......"
+    ])
+
+    static let sparkleSolid = PixelSprite(rows: [
+        "....#....",
+        "....#....",
+        "....#....",
+        "...###...",
+        "#########",
+        "...###...",
+        "....#....",
+        "....#....",
+        "....#...."
+    ])
+
+    static let moon = PixelSprite(rows: [
+        ".....###.....",
+        "...##..#.....",
+        "..#...#......",
+        ".#...#.......",
+        ".#..#........",
+        "#...#........",
+        "#...#........",
+        "#...#........",
+        ".#..#........",
+        ".#...#.......",
+        "..#...#......",
+        "...##..#.....",
+        ".....###....."
+    ])
+
+    static let circle = PixelSprite(rows: [
+        "...###...",
+        "..#...#..",
+        ".#.....#.",
+        "#.......#",
+        "#.......#",
+        "#.......#",
+        ".#.....#.",
+        "..#...#..",
+        "...###..."
+    ])
+
+    static let dot = PixelSprite(rows: [
+        ".##.",
+        "####",
+        "####",
+        ".##."
+    ])
+}
+
+/// Stamps a sprite at whatever size it is handed, so one grid serves both the
+/// 54pt picker tile and a full-size canvas sticker.
+private struct PixelMark: View {
+    let sprite: PixelSprite
+    let color: Color
+
+    var body: some View {
+        Canvas { context, size in
+            let cell = min(size.width, size.height) / CGFloat(PixelSprite.field)
+            let origin = CGPoint(
+                x: (size.width - cell * CGFloat(sprite.width)) / 2,
+                y: (size.height - cell * CGFloat(sprite.height)) / 2
+            )
+            var path = Path()
+            for (row, line) in sprite.rows.enumerated() {
+                for (column, pixel) in line.enumerated() where pixel == "#" {
+                    path.addRect(CGRect(
+                        x: origin.x + CGFloat(column) * cell,
+                        y: origin.y + CGFloat(row) * cell,
+                        width: cell,
+                        height: cell
+                    ))
+                }
+            }
+            // Filled as one path so neighbouring pixels merge instead of showing
+            // antialiased seams along every shared edge.
+            context.fill(path, with: .color(color))
         }
         .aspectRatio(1, contentMode: .fit)
     }
