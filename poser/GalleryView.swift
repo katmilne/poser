@@ -2,14 +2,24 @@ import SwiftData
 import SwiftUI
 import UIKit
 
+fileprivate let polaroidAspect: CGFloat = 0.714
+
+private struct PocketFrameKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { $1 })
+    }
+}
+
 struct GalleryView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ShotRecord.takenAt, order: .reverse) private var shots: [ShotRecord]
-    @Namespace private var albumNamespace
     @State private var page = 0
     @State private var lightboxShot: ShotRecord?
-    @State private var openedShotID: String?
+    @State private var pocketFrames: [String: CGRect] = [:]
+    @State private var progress: CGFloat = 0
+    @State private var dragOffset: CGFloat = 0
     @State private var saveMessage: String?
     @State private var confirmsDelete: ShotRecord?
 
@@ -36,15 +46,11 @@ struct GalleryView: View {
                             ForEach(Array(pages.enumerated()), id: \.offset) { pageIndex, pageShots in
                                 AlbumPage(
                                     shots: pageShots,
-                                    namespace: albumNamespace,
                                     activeLightboxID: lightboxShot?.id,
-                                    animateIn: page == pageIndex
-                                ) { shot in
-                                    openedShotID = shot.id
-                                    withAnimation(.poserGlide) { lightboxShot = shot }
-                                } onDelete: { shot in
-                                    confirmsDelete = shot
-                                }
+                                    animateIn: page == pageIndex,
+                                    onOpen: { open($0, from: $1) },
+                                    onDelete: { confirmsDelete = $0 }
+                                )
                                 .padding(.horizontal, 20)
                                 .tag(pageIndex)
                             }
@@ -53,21 +59,39 @@ struct GalleryView: View {
                         .sensoryFeedback(.impact(weight: .heavy), trigger: page)
                     }
 
-                    Text(String(format: "%02d / %02d", min(page + 1, max(1, pages.count)), max(1, pages.count)))
-                        .font(.system(size: 12, weight: .black, design: .monospaced))
-                        .tracking(1.8)
-                        .foregroundStyle(Theme.Colors.denim)
-                        .padding(.bottom, 14)
+                    HStack(spacing: 12) {
+                        GlassIconButton(
+                            symbol: "chevron.left",
+                            accessibilityLabel: "Previous page",
+                            size: 34,
+                            disabled: page <= 0
+                        ) { turnPage(by: -1) }
+
+                        Text(String(format: "%02d / %02d", min(page + 1, max(1, pages.count)), max(1, pages.count)))
+                            .font(.system(size: 12, weight: .black, design: .monospaced))
+                            .tracking(1.8)
+                            .foregroundStyle(Theme.Colors.denim)
+                            // Fixed width so the buttons hold still as the digits change.
+                            .frame(minWidth: 68)
+
+                        GlassIconButton(
+                            symbol: "chevron.right",
+                            accessibilityLabel: "Next page",
+                            size: 34,
+                            disabled: page >= pages.count - 1
+                        ) { turnPage(by: 1) }
+                    }
+                    .padding(.bottom, 14)
                 }
 
                 if let shot = lightboxShot {
-                    AlbumLightbox(
-                        shots: shots,
+                    LightboxLayer(
                         shot: shot,
-                        namespace: albumNamespace,
-                        returnsToPocket: openedShotID == shot.id,
-                        onChange: { lightboxShot = $0 },
-                        onClose: { closeLightbox() },
+                        seated: pocketFrames[shot.id],
+                        screen: proxy.size,
+                        progress: $progress,
+                        dragOffset: $dragOffset,
+                        onClosed: { lightboxShot = nil },
                         onEdit: {
                             lightboxShot = nil
                             appState.showsGallery = false
@@ -80,6 +104,8 @@ struct GalleryView: View {
                     .zIndex(10)
                 }
             }
+            .coordinateSpace(name: "gallery")
+            .onPreferenceChange(PocketFrameKey.self) { pocketFrames = $0 }
             .confirmationDialog("Delete this photo from POSER?", isPresented: Binding(
                 get: { confirmsDelete != nil },
                 set: { if !$0 { confirmsDelete = nil } }
@@ -97,7 +123,33 @@ struct GalleryView: View {
             } message: {
                 Text(saveMessage ?? "")
             }
+            .task { seedTempTestShotsIfNeeded() }
         }
+    }
+
+    private func seedTempTestShotsIfNeeded() {
+        guard shots.isEmpty else { return }
+        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let shotsDir = docs.appending(path: "shots")
+        let displayDir = shotsDir.appending(path: "display")
+        try? FileManager.default.createDirectory(at: displayDir, withIntermediateDirectories: true)
+        let colors: [UIColor] = [.systemRed, .systemBlue, .systemGreen, .systemOrange, .systemPurple]
+        for color in colors {
+            let id = UUID().uuidString.lowercased()
+            let fileName = "\(id).jpg"
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 800))
+            let image = renderer.image { ctx in
+                color.setFill()
+                ctx.fill(CGRect(x: 0, y: 0, width: 600, height: 800))
+            }
+            if let data = image.jpegData(compressionQuality: 0.9) {
+                try? data.write(to: shotsDir.appending(path: fileName))
+                try? data.write(to: displayDir.appending(path: fileName))
+            }
+            let record = ShotRecord(id: id, fileName: fileName, facing: .back, width: 600, height: 800)
+            modelContext.insert(record)
+        }
+        try? modelContext.save()
     }
 
     private var albumBackground: some View {
@@ -149,8 +201,30 @@ struct GalleryView: View {
         .padding(40)
     }
 
-    private func closeLightbox() {
-        withAnimation(.poserGlide) { lightboxShot = nil }
+    // The TabView's own .sensoryFeedback on `page` covers the haptic for both
+    // these buttons and the swipe between pages.
+    private func turnPage(by delta: Int) {
+        let next = page + delta
+        guard pages.indices.contains(next) else { return }
+        withAnimation(.poserGlide) { page = next }
+    }
+
+    private func open(_ shot: ShotRecord, from initialProgress: CGFloat) {
+        progress = min(0.5, max(0, initialProgress))
+        dragOffset = 0
+        lightboxShot = shot
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        // Mirror of closeToPocket: first ride up out of the sleeve until the card's
+        // bottom edge clears the pocket's top opening, then expand to fullscreen.
+        // Phase A resumes from wherever the pull left the card, and is shortened by
+        // the distance already covered so the rise keeps a steady speed.
+        let rise = 0.26 * Double((0.5 - progress) / 0.5)
+        DispatchQueue.main.async {
+            withAnimation(.easeOut(duration: rise)) { progress = 0.5 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + rise) {
+                withAnimation(.easeInOut(duration: 0.4)) { progress = 1 }
+            }
+        }
     }
 
     private func delete(_ shot: ShotRecord) {
@@ -217,10 +291,9 @@ struct GalleryView: View {
 
 private struct AlbumPage: View {
     let shots: [ShotRecord]
-    let namespace: Namespace.ID
     let activeLightboxID: String?
     let animateIn: Bool
-    let onOpen: (ShotRecord) -> Void
+    let onOpen: (ShotRecord, CGFloat) -> Void
     let onDelete: (ShotRecord) -> Void
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
@@ -238,9 +311,8 @@ private struct AlbumPage: View {
                 ForEach(Array(shots.enumerated()), id: \.element.id) { index, shot in
                     PhotoPocket(
                         shot: shot,
-                        namespace: namespace,
                         hiddenForLightbox: activeLightboxID == shot.id,
-                        onOpen: { onOpen(shot) },
+                        onOpen: { onOpen(shot, $0) },
                         onDelete: { onDelete(shot) }
                     )
                     .transition(.scale(scale: 0.82).combined(with: .offset(y: 24)))
@@ -262,52 +334,42 @@ private struct AlbumPage: View {
 
 private struct PhotoPocket: View {
     let shot: ShotRecord
-    let namespace: Namespace.ID
     let hiddenForLightbox: Bool
-    let onOpen: () -> Void
+    // Carries the progress the pull already covered, so the lightbox can pick up
+    // the card exactly where the finger left it instead of snapping back to seated.
+    let onOpen: (CGFloat) -> Void
     let onDelete: () -> Void
     @State private var pullY: CGFloat = 0
     @State private var crossedThreshold = false
     @State private var confirmsDelete = false
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Theme.Colors.linen)
-            LocalFileImage(url: ImageStore.shared.shotDisplayURL(shot), maxPixel: 800)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .matchedGeometryEffect(id: shot.id, in: namespace, isSource: !hiddenForLightbox)
-                .offset(y: pullY)
-                .opacity(hiddenForLightbox ? 0 : 1)
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            pullY = min(0, value.translation.height)
-                            let crossed = pullY < -90
-                            if crossed != crossedThreshold {
-                                UISelectionFeedbackGenerator().selectionChanged()
-                                crossedThreshold = crossed
-                            }
-                        }
-                        .onEnded { value in
-                            let isTap = abs(value.translation.width) < 10 && abs(value.translation.height) < 10
-                            if isTap || pullY < -90 || value.predictedEndTranslation.height < -140 {
-                                withAnimation(.poserGlide) { pullY = 0 }
-                                onOpen()
-                            } else {
-                                withAnimation(.poserGlide) { pullY = 0 }
-                                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
-                            }
-                            crossedThreshold = false
-                        }
-                )
+        GeometryReader { geo in
+            let polaroidW = geo.size.width * 0.82
+            ZStack {
+                SleeveBackground()
+                PolaroidCard(shot: shot, width: polaroidW)
+                    .offset(y: pullY)
+                    .opacity(hiddenForLightbox ? 0 : 1)
+                    .simultaneousGesture(
+                        pullGesture(cell: geo.size, cardH: polaroidW / polaroidAspect)
+                    )
+                    // A tap runs the same rise-then-expand animation, just from seated.
+                    .onTapGesture { onOpen(0) }
+                SleeveFront()
+                    .allowsHitTesting(false)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+            .background(
+                GeometryReader { g in
+                    Color.clear.preference(
+                        key: PocketFrameKey.self,
+                        value: [shot.id: g.frame(in: .global)]
+                    )
+                }
+            )
         }
         .aspectRatio(Theme.viewportAspect, contentMode: .fit)
-        .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color.white.opacity(0.88), lineWidth: 1)
-        }
         .contentShape(.rect)
         .contextMenu {
             Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
@@ -317,62 +379,191 @@ private struct PhotoPocket: View {
             Button("Cancel", role: .cancel) { }
         }
     }
+
+    private func pullGesture(cell: CGSize, cardH: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                pullY = min(0, value.translation.height)
+                let crossed = pullY < -60
+                if crossed != crossedThreshold {
+                    UISelectionFeedbackGenerator().selectionChanged()
+                    crossedThreshold = crossed
+                }
+            }
+            .onEnded { value in
+                let openIt = pullY < -60 || value.predictedEndTranslation.height < -110
+                crossedThreshold = false
+                if openIt {
+                    // Phase A of the lightbox runs from the pocket's centre to cardH/2
+                    // above its top opening; map how far the pull got along that span.
+                    let span = cell.height / 2 + cardH / 2
+                    let covered = min(1, max(0, -pullY / span))
+                    // No animation: the seated card is hidden the instant the lightbox
+                    // takes over, and the lightbox resumes from this exact offset.
+                    pullY = 0
+                    onOpen(0.5 * covered)
+                } else {
+                    withAnimation(.poserGlide) { pullY = 0 }
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                }
+            }
+    }
+}
+
+// The translucent, stitched clear sleeve that the polaroid slips into.
+private struct SleeveBackground: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(0.10))
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .inset(by: 5)
+                .stroke(
+                    Theme.Colors.denim.opacity(0.34),
+                    style: StrokeStyle(lineWidth: 1.3, dash: [4.5, 3.5])
+                )
+            VStack {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .fill(Color.white.opacity(0.6))
+                    .frame(height: 3)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 9)
+                Spacer()
+            }
+        }
+    }
+}
+
+// A soft plastic sheen drawn over the seated photo.
+private struct SleeveFront: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(
+                LinearGradient(
+                    colors: [Color.white.opacity(0.20), .clear, Color.white.opacity(0.05)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+    }
+}
+
+// A polaroid: white frame, photo inset, thick bottom lip. Used both seated and full-screen.
+private struct PolaroidCard: View {
+    let shot: ShotRecord
+    let width: CGFloat
+    var maxPixel: CGFloat = 800
+
+    var body: some View {
+        let side = width * 0.055
+        let photoW = width - side * 2
+        let photoH = photoW / Theme.viewportAspect
+        let cardH = width / polaroidAspect
+        let radius = max(3, width * 0.028)
+        ZStack(alignment: .top) {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .fill(Color.white)
+            LocalFileImage(url: ImageStore.shared.shotDisplayURL(shot), maxPixel: maxPixel)
+                .frame(width: photoW, height: photoH)
+                .clipShape(RoundedRectangle(cornerRadius: radius * 0.6, style: .continuous))
+                .padding(.top, side)
+        }
+        .frame(width: width, height: cardH)
+        .overlay(
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .stroke(Color.black.opacity(0.05), lineWidth: 0.5)
+        )
+        .shadow(color: Theme.stickerShadow, radius: width * 0.03, y: width * 0.012)
+    }
 }
 
 private struct EmptyPocket: View {
     var body: some View {
-        RoundedRectangle(cornerRadius: 14, style: .continuous)
-            .fill(Theme.Colors.linen.opacity(0.82))
-            .overlay {
-                Image(systemName: "photo")
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(Theme.Colors.outline)
-            }
-            .aspectRatio(Theme.viewportAspect, contentMode: .fit)
+        ZStack {
+            SleeveBackground()
+            Image(systemName: "photo")
+                .font(.system(size: 24, weight: .light))
+                .foregroundStyle(Theme.Colors.outline)
+        }
+        .aspectRatio(Theme.viewportAspect, contentMode: .fit)
     }
 }
 
-private struct AlbumLightbox: View {
-    let shots: [ShotRecord]
+// Full-screen photo layer with a custom "slide out of / back into the pocket" transition.
+private struct LightboxLayer: View {
     let shot: ShotRecord
-    let namespace: Namespace.ID
-    let returnsToPocket: Bool
-    let onChange: (ShotRecord) -> Void
-    let onClose: () -> Void
+    let seated: CGRect?
+    let screen: CGSize
+    @Binding var progress: CGFloat
+    @Binding var dragOffset: CGFloat
+    let onClosed: () -> Void
     let onEdit: () -> Void
     let onSave: () -> Void
     let onDelete: () -> Void
     let onUseGhost: () -> Void
-    @State private var dismissOffset: CGFloat = 0
+
+    // The reported frame is the whole pocket cell (sleeve bounds), in global space.
+    private var cellRectGlobal: CGRect {
+        seated ?? CGRect(
+            x: screen.width / 2 - 70,
+            y: screen.height * 0.42 - 93,
+            width: 140,
+            height: 186
+        )
+    }
+
+    private var fullWidth: CGFloat {
+        min(screen.width * 0.86, (screen.height * 0.7) * polaroidAspect)
+    }
+
+    private var fullCenter: CGPoint {
+        CGPoint(x: screen.width / 2, y: screen.height * 0.44)
+    }
+
+    // `cell` must already be in the card layer's local space.
+    private func morph(cell: CGRect) -> (center: CGPoint, width: CGFloat) {
+        let photoW = cell.width * 0.82
+        let photoH = photoW / polaroidAspect
+        // Seated: photo centered in the pocket. Above: photo bottom edge aligned to the pocket's top opening.
+        let seatedC = CGPoint(x: cell.midX, y: cell.midY)
+        let aboveC = CGPoint(x: cell.midX, y: cell.minY - photoH / 2)
+        let p = max(0, min(1, progress))
+        if p <= 0.5 {
+            let t = p / 0.5
+            return (lerp(seatedC, aboveC, t), photoW)
+        } else {
+            let t = (p - 0.5) / 0.5
+            return (lerp(aboveC, fullCenter, t), photoW + (fullWidth - photoW) * t)
+        }
+    }
+
+    private var controlsOpacity: Double {
+        max(0, Double(progress) - Double(abs(dragOffset)) / 220)
+    }
 
     var body: some View {
+        let bgOpacity = max(0, 0.9 * Double(progress) - Double(abs(dragOffset)) / 700)
         ZStack {
-            Color.black.opacity(0.88 - min(0.5, abs(dismissOffset) / 900)).ignoresSafeArea()
-            TabView(selection: Binding(
-                get: { shot.id },
-                set: { id in if let next = shots.first(where: { $0.id == id }) { onChange(next) } }
-            )) {
-                ForEach(shots) { item in
-                    LocalFileImage(url: ImageStore.shared.shotDisplayURL(item), maxPixel: 1800)
-                        .aspectRatio(Theme.viewportAspect, contentMode: .fit)
-                        .matchedGeometryEffect(id: item.id, in: namespace, isSource: item.id == shot.id)
-                        .tag(item.id)
-                }
+            Color.black.opacity(bgOpacity)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .gesture(dismissGesture)
+
+            // Rendered once at full size and scaled as a single transform so the
+            // white frame and the photo never drift apart. The pocket reports in global
+            // space; it is rebased into this reader's local space once here, so every
+            // coordinate below shares one origin regardless of safe-area insets.
+            GeometryReader { geo in
+                let f = geo.frame(in: .global)
+                let cell = cellRectGlobal.offsetBy(dx: -f.minX, dy: -f.minY)
+                let m = morph(cell: cell)
+                PolaroidCard(shot: shot, width: fullWidth, maxPixel: 1600)
+                    .scaleEffect(m.width / fullWidth, anchor: .center)
+                    .position(x: m.center.x, y: m.center.y + dragOffset)
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .offset(y: dismissOffset)
-            .gesture(
-                DragGesture()
-                    .onChanged { value in if value.translation.height > 0 { dismissOffset = value.translation.height } }
-                    .onEnded { value in
-                        if dismissOffset > 150 || value.predictedEndTranslation.height > 420 {
-                            withAnimation(.easeOut(duration: 0.24)) { dismissOffset = 640 }
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: onClose)
-                        } else {
-                            withAnimation(.poserSettle) { dismissOffset = 0 }
-                        }
-                    }
-            )
+            .allowsHitTesting(false)
 
             VStack {
                 HStack {
@@ -385,19 +576,46 @@ private struct AlbumLightbox: View {
                 Spacer()
                 GlassSurface(cornerRadius: Theme.Radius.lg, tint: Theme.Colors.black.opacity(0.14)) {
                     HStack(spacing: 14) {
-                        GlassIconButton(symbol: "xmark", accessibilityLabel: "Close photo", selected: returnsToPocket, action: onClose)
+                        GlassIconButton(symbol: "xmark", accessibilityLabel: "Close photo", selected: true, action: closeToPocket)
                         GlassIconButton(symbol: "wand.and.sparkles", accessibilityLabel: "Edit photo", action: onEdit)
                         GlassIconButton(symbol: "square.and.arrow.down", accessibilityLabel: "Save to Camera Roll", action: onSave)
-                        Text("\((shots.firstIndex { $0.id == shot.id } ?? 0) + 1) / \(shots.count)")
-                            .font(.system(size: 11, weight: .black, design: .monospaced))
-                            .foregroundStyle(.white)
                         GlassIconButton(symbol: "trash", accessibilityLabel: "Delete photo", action: onDelete)
                     }
                     .padding(8)
                 }
                 .padding(.bottom, 14)
             }
+            .opacity(controlsOpacity)
+            .allowsHitTesting(controlsOpacity > 0.85)
         }
-        .transition(.opacity)
+    }
+
+    private var dismissGesture: some Gesture {
+        DragGesture()
+            .onChanged { value in dragOffset = value.translation.height }
+            .onEnded { value in
+                if abs(dragOffset) > 110 || abs(value.predictedEndTranslation.height) > 320 {
+                    closeToPocket()
+                } else {
+                    withAnimation(.poserSettle) { dragOffset = 0 }
+                }
+            }
+    }
+
+    private func closeToPocket() {
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        // Two beats: first settle to just above the pocket, then feed straight down into it.
+        withAnimation(.easeInOut(duration: 0.4)) {
+            progress = 0.5
+            dragOffset = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            withAnimation(.easeIn(duration: 0.26)) { progress = 0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.26, execute: onClosed)
+        }
+    }
+
+    private func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
+        CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
     }
 }
