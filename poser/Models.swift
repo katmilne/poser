@@ -168,6 +168,11 @@ final class CustomStickerRecord {
     var createdAt: Date
     var width: Int
     var height: Int
+    /// Set when the sticker is taken out of the picker. The record and its file
+    /// stay put: photos store a placement by id and draw nothing when the image
+    /// is gone, so retiring one has to leave the artwork behind for the shots
+    /// already wearing it.
+    var hiddenAt: Date?
 
     init(id: String, fileName: String, createdAt: Date = .now, width: Int, height: Int) {
         self.id = id

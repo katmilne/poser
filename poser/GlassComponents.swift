@@ -97,6 +97,9 @@ struct GlassTextButton: View {
     var compact = false
     var selected = false
     var disabled = false
+    /// Floor for the pill's width. A row of these otherwise sizes each pill to
+    /// its own label, so set this to give a set of related choices one width.
+    var minWidth: CGFloat?
     let action: () -> Void
 
     var body: some View {
@@ -111,6 +114,7 @@ struct GlassTextButton: View {
                     .tracking(0.4)
                     .foregroundStyle(disabled ? Theme.Colors.disabled : Theme.Colors.ink)
                     .padding(.horizontal, compact ? 14 : 20)
+                    .frame(minWidth: minWidth)
                     .frame(height: compact ? 36 : 48)
             }
         }

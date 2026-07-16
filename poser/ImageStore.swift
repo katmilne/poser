@@ -245,10 +245,6 @@ actor ImageStore {
         }
     }
 
-    func deleteCustomSticker(_ record: CustomStickerRecord) {
-        try? fileManager.removeItem(at: documentsURL.appending(path: "stickers/\(record.fileName)"))
-    }
-
     nonisolated func shotOriginalURL(_ record: ShotRecord) -> URL {
         documentURL.appending(path: "shots/\(record.fileName)")
     }

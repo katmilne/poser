@@ -17,6 +17,7 @@ struct PreviewEditorView: View {
     @State private var noteText = ""
     @State private var showsNoteEntry = false
     @State private var showsStickerMaker = false
+    @State private var stickerPendingRemoval: CustomStickerRecord?
     @State private var sharePayload: SharePayload?
     @State private var alertMessage: String?
     @State private var isRendering = false
@@ -105,6 +106,19 @@ struct PreviewEditorView: View {
             StickerMakerView { custom in addCustomSticker(custom) }
         }
         .sheet(item: $sharePayload) { payload in ShareSheet(items: [payload.url]) }
+        .confirmationDialog(
+            "Remove this sticker from your pack?",
+            isPresented: Binding(
+                get: { stickerPendingRemoval != nil },
+                set: { if !$0 { stickerPendingRemoval = nil } }
+            ),
+            presenting: stickerPendingRemoval
+        ) { custom in
+            Button("Remove sticker", role: .destructive) { removeCustomStickerFromPack(custom) }
+            Button("Cancel", role: .cancel) { }
+        } message: { _ in
+            Text("Photos you've already put it on will keep it.")
+        }
         .alert("POSER", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
@@ -163,7 +177,12 @@ struct PreviewEditorView: View {
                 ScrollView(.horizontal) {
                     HStack(spacing: 8) {
                         ForEach(FrameCatalog.all, id: \.id) { frame in
-                            GlassTextButton(title: frame.title, compact: true, selected: frameID == frame.id) {
+                            GlassTextButton(
+                                title: frame.title,
+                                compact: true,
+                                selected: frameID == frame.id,
+                                minWidth: FrameCatalog.pillWidth
+                            ) {
                                 frameID = frame.id
                             }
                         }
@@ -225,14 +244,26 @@ struct PreviewEditorView: View {
         .buttonStyle(PressScaleButtonStyle())
         .accessibilityLabel("Make a sticker from a photo")
 
-        ForEach(customStickers) { custom in
+        ForEach(pickerStickers) { custom in
             Button { addCustomSticker(custom) } label: {
                 StickerGlyph(id: "custom", customURL: ImageStore.shared.customStickerURL(custom))
                     .frame(width: 54, height: 54)
             }
             .buttonStyle(PressScaleButtonStyle())
             .accessibilityLabel("Add your sticker")
+            .contextMenu {
+                Button("Remove sticker", systemImage: "trash", role: .destructive) {
+                    stickerPendingRemoval = custom
+                }
+            }
         }
+    }
+
+    /// The query deliberately keeps every record, hidden ones included, so
+    /// `customStickerURLs` can still resolve art for stickers already placed on
+    /// this shot. Only the picker narrows to what's still on offer.
+    private var pickerStickers: [CustomStickerRecord] {
+        customStickers.filter { $0.hiddenAt == nil }
     }
 
     private func packItems(_ items: [(id: String, title: String)]) -> some View {
@@ -333,6 +364,16 @@ struct PreviewEditorView: View {
         )
         stickers.append(sticker)
         selectedStickerID = sticker.key
+    }
+
+    /// Retires a sticker from the picker without touching the photos wearing it.
+    /// The record and its file survive so those placements keep drawing — only
+    /// `ownPackItems` filters on `hiddenAt`.
+    private func removeCustomStickerFromPack(_ custom: CustomStickerRecord) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        custom.hiddenAt = .now
+        try? modelContext.save()
+        stickerPendingRemoval = nil
     }
 
     private var customStickerURLs: [String: URL] {
@@ -577,6 +618,12 @@ private enum FrameCatalog {
         (nil, "None"), ("hearts", "Hearts"), ("stars", "Stars"),
         ("digicam", "Digicam"), ("sparkle", "Sparkle")
     ]
+
+    /// One width for every frame pill, so the row reads as a set of equal
+    /// choices rather than pills sized to their own labels. Comfortably clears
+    /// the longest title at the compact button's fixed 13pt font, and acts as a
+    /// floor — a longer title would grow its pill rather than clip.
+    static let pillWidth: CGFloat = 92
 }
 
 private enum StickerPack: String, CaseIterable, Identifiable {
@@ -850,38 +897,55 @@ private struct DecorativeFrame: View {
     }
 
     private func frameSymbols(_ symbol: String, color: Color, size: CGSize) -> some View {
-        let count = 16
-        return ZStack {
-            ForEach(0..<count, id: \.self) { index in
+        ZStack {
+            ForEach(Array(borderPoints(in: size).enumerated()), id: \.offset) { _, point in
                 Image(systemName: symbol)
                     .font(.system(size: size.width * 0.075, weight: .bold))
                     .foregroundStyle(.white)
                     .shadow(color: Theme.Colors.ink.opacity(0.35), radius: 2, y: 1)
-                    .position(borderPoint(index: index, count: count, size: size))
+                    .position(point)
             }
         }
     }
 
-    private func borderPoint(index: Int, count: Int, size: CGSize) -> CGPoint {
+    /// Walks the border clockwise from the top-left, stepping each edge on its
+    /// own count rather than marching a single stride around the whole
+    /// perimeter. A shared stride only lands on all four corners when the rect
+    /// is square: on the 3:4 canvas the corners sit at distances the stride
+    /// steps straight over, which leaves three of them bare.
+    ///
+    /// Each edge starts exactly on its corner, so all four are always marked,
+    /// and the counts are picked to keep the horizontal and vertical steps as
+    /// close to the same length as the rect allows.
+    private func borderPoints(in size: CGSize) -> [CGPoint] {
         let inset: CGFloat = 20
-        let w = max(1, size.width - inset * 2)
-        let h = max(1, size.height - inset * 2)
-        let perimeter = 2 * (w + h)
-        var distance = perimeter * CGFloat(index) / CGFloat(count)
+        let minX = inset
+        let minY = inset
+        let maxX = max(minX + 1, size.width - inset)
+        let maxY = max(minY + 1, size.height - inset)
+        let w = maxX - minX
+        let h = maxY - minY
 
-        if distance < w {
-            return CGPoint(x: inset + distance, y: inset)
+        // Splits the border into roughly 14 marks on a 3:4 canvas (3 steps
+        // across each horizontal edge, 4 down each vertical one).
+        let unit = (w + h) / 7
+        let columns = max(1, Int((w / unit).rounded()))
+        let rows = max(1, Int((h / unit).rounded()))
+
+        var points: [CGPoint] = []
+        for i in 0..<columns {
+            points.append(CGPoint(x: minX + w * CGFloat(i) / CGFloat(columns), y: minY))
         }
-        distance -= w
-        if distance < h {
-            return CGPoint(x: size.width - inset, y: inset + distance)
+        for i in 0..<rows {
+            points.append(CGPoint(x: maxX, y: minY + h * CGFloat(i) / CGFloat(rows)))
         }
-        distance -= h
-        if distance < w {
-            return CGPoint(x: size.width - inset - distance, y: size.height - inset)
+        for i in 0..<columns {
+            points.append(CGPoint(x: maxX - w * CGFloat(i) / CGFloat(columns), y: maxY))
         }
-        distance -= w
-        return CGPoint(x: inset, y: size.height - inset - distance)
+        for i in 0..<rows {
+            points.append(CGPoint(x: minX, y: maxY - h * CGFloat(i) / CGFloat(rows)))
+        }
+        return points
     }
 }
 
