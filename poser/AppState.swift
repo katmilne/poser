@@ -8,7 +8,6 @@ final class AppState {
     var ghostFlipped = false
     var ghostOpacity = 0.40
     var presentedShot: ShotRecord?
-    var editingShot: ShotRecord?
     var showsGallery = false
     var showsPoseLibrary = false
 

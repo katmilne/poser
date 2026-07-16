@@ -22,6 +22,8 @@ struct GalleryView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var saveMessage: String?
     @State private var confirmsDelete: ShotRecord?
+    @State private var sharePayload: SharePayload?
+    @State private var editingShot: ShotRecord?
 
     private var pages: [[ShotRecord]] {
         stride(from: 0, to: shots.count, by: 4).map { start in
@@ -92,11 +94,10 @@ struct GalleryView: View {
                         progress: $progress,
                         dragOffset: $dragOffset,
                         onClosed: { lightboxShot = nil },
-                        onEdit: {
-                            lightboxShot = nil
-                            appState.showsGallery = false
-                            appState.editingShot = shot
-                        },
+                        // The lightbox stays standing behind the editor, so closing the
+                        // editor drops straight back onto the photo it just decorated.
+                        onEdit: { editingShot = shot },
+                        onShare: { sharePayload = SharePayload(url: currentURL(for: shot)) },
                         onSave: { Task { await save(shot) } },
                         onDelete: { confirmsDelete = shot },
                         onUseGhost: { useGhost(from: shot) }
@@ -115,6 +116,10 @@ struct GalleryView: View {
                 }
                 Button("Cancel", role: .cancel) { }
             }
+            .fullScreenCover(item: $editingShot) { shot in
+                PreviewEditorView(shot: shot, showsExportActions: false)
+            }
+            .sheet(item: $sharePayload) { payload in ShareSheet(items: [payload.url]) }
             .alert("Album", isPresented: Binding(
                 get: { saveMessage != nil },
                 set: { if !$0 { saveMessage = nil } }
@@ -237,10 +242,15 @@ struct GalleryView: View {
         page = min(page, max(0, pages.count - 1))
     }
 
-    private func save(_ shot: ShotRecord) async {
-        let url = shot.decoratedFileName == nil
+    /// An undecorated shot has no developed copy, so it shares and saves at full quality.
+    private func currentURL(for shot: ShotRecord) -> URL {
+        shot.decoratedFileName == nil
             ? ImageStore.shared.shotOriginalURL(shot)
             : ImageStore.shared.shotDisplayURL(shot)
+    }
+
+    private func save(_ shot: ShotRecord) async {
+        let url = currentURL(for: shot)
         do {
             try await PhotoLibraryService.saveImage(at: url)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -500,6 +510,7 @@ private struct LightboxLayer: View {
     @Binding var dragOffset: CGFloat
     let onClosed: () -> Void
     let onEdit: () -> Void
+    let onShare: () -> Void
     let onSave: () -> Void
     let onDelete: () -> Void
     let onUseGhost: () -> Void
@@ -578,6 +589,7 @@ private struct LightboxLayer: View {
                     HStack(spacing: 14) {
                         GlassIconButton(symbol: "xmark", accessibilityLabel: "Close photo", selected: true, action: closeToPocket)
                         GlassIconButton(symbol: "wand.and.sparkles", accessibilityLabel: "Edit photo", action: onEdit)
+                        GlassIconButton(symbol: "square.and.arrow.up", accessibilityLabel: "Share photo", action: onShare)
                         GlassIconButton(symbol: "square.and.arrow.down", accessibilityLabel: "Save to Camera Roll", action: onSave)
                         GlassIconButton(symbol: "trash", accessibilityLabel: "Delete photo", action: onDelete)
                     }

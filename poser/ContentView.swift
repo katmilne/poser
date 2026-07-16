@@ -21,8 +21,7 @@ struct ContentView: View {
             }
         }
         .accessibilityHidden(
-            appState.showsGallery || appState.showsPoseLibrary ||
-            appState.presentedShot != nil || appState.editingShot != nil
+            appState.showsGallery || appState.showsPoseLibrary || appState.presentedShot != nil
         )
         .fullScreenCover(isPresented: $appState.showsGallery) {
             GalleryView()
@@ -31,9 +30,6 @@ struct ContentView: View {
             PoseLibraryView()
         }
         .fullScreenCover(item: $appState.presentedShot) { shot in
-            PreviewEditorView(shot: shot)
-        }
-        .fullScreenCover(item: $appState.editingShot) { shot in
             PreviewEditorView(shot: shot)
         }
         .task {
