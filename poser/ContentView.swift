@@ -72,7 +72,10 @@ enum BundledPoseCatalog {
         }
     }
 
-    private static let catalogVersion = 3
+    /// Bumped to 4 when built-in poses stopped copying their full-resolution PNG
+    /// into Documents and started reading it from the bundle. Re-seeding
+    /// repoints the records and reclaims the old copies.
+    private static let catalogVersion = 4
     private static let catalogVersionKey = "bundledPoseCatalogVersion"
 
     private static let poses = [
@@ -157,6 +160,7 @@ enum BundledPoseCatalog {
 
             try modelContext.save()
             defaults.set(catalogVersion, forKey: catalogVersionKey)
+            await ImageStore.shared.removeLegacyBundledSources(ids: poses.map(\.id))
         } catch {
             modelContext.rollback()
             // Bundled poses are starter content, so a transient file-system or

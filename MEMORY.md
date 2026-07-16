@@ -8,6 +8,28 @@
 - No unit/UI test target currently exists. Real camera validation requires a physical iPhone.
 - Argent CLI is installed, but Argent MCP device tools were not exposed in the 2026-07-14 session.
 
+# Performance Invariants
+
+- **Nothing touches `AVCaptureSession` on the main actor.** Device discovery, opening an input,
+  and `commitConfiguration` cost hundreds of milliseconds on a real phone. `CameraController`
+  configures, switches, and starts the session on `sessionQueue` and the main actor only awaits
+  the result. Configuring inline on the main actor is why the app used to open frozen — every
+  control was dead until AVFoundation finished. `session` is only safe to read on that queue,
+  which is why configuration is tracked by `isConfigured`/`configuration` rather than by
+  inspecting `session.inputs`. Overlapping starts must keep sharing one `configuration` task:
+  two attempts add the same inputs twice and the session refuses them.
+- **Built-in pose PNGs are read from the app bundle, never copied into Documents.**
+  `persistBundledOverlay` copies only the small prepared JPEG; `sourceFileName` gets a
+  `bundle:`-prefixed resource name that `overlaySourceURL` resolves against `Bundle.main`. The
+  sources are read-only and permanent, so copying all fourteen cost ~42MB of disk and a long
+  first-launch stall for nothing. Only read image headers (`imageDimensions(at:)`) from them.
+- **`LocalImageLoader` is not an actor, deliberately.** Image decoding is CPU-bound; a single
+  actor executor serialized every thumbnail behind every other one, so the pose strip filled in
+  one image at a time and one full-size pose guide blocked all the small ones. `NSCache` is
+  already thread-safe. Keep decodes concurrent, keep the cache cost-bounded by decoded bitmap
+  bytes, and keep `LocalFileImage` seeding its state from `cachedImage` so a cached image does
+  not cost a frame of placeholder.
+
 # UI Invariants
 
 - **The camera viewfinder is edge-to-edge.** `CameraView` fills the entire screen with the

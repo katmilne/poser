@@ -94,27 +94,22 @@ actor ImageStore {
     ) throws -> PersistedOverlay {
         try prepareDirectories()
 
-        // Built-in poses are prepared at build time. First launch only copies
-        // their display JPEG and original source instead of decoding and
-        // re-encoding every large PNG on the user's phone.
-        let sourceData = try Data(contentsOf: sourceURL, options: .mappedIfSafe)
-        let preparedData = try Data(contentsOf: preparedURL, options: .mappedIfSafe)
-        let sourceDimensions = try imageDimensions(sourceData)
-        let preparedDimensions = try imageDimensions(preparedData)
+        // Built-in poses are prepared at build time, so this only copies the
+        // small display JPEG. The full-resolution PNG stays in the bundle and is
+        // referenced there rather than copied: it is read-only and permanent, so
+        // duplicating all fourteen into Documents bought nothing and cost ~42MB
+        // of disk and a long stall on first launch, before any pose could show.
+        let sourceDimensions = try imageDimensions(at: sourceURL)
+        let preparedDimensions = try imageDimensions(at: preparedURL)
         let crop = centeredThreeByFourCrop(
             width: sourceDimensions.width,
             height: sourceDimensions.height,
             center: cropCenter
         )
         let fileName = "\(id).jpg"
-        let sourceFileName = "\(id)-source.png"
         let addedAt = Date().addingTimeInterval(Double(-order) * 0.001)
 
-        try sourceData.write(
-            to: documentsURL.appending(path: "overlays/sources/\(sourceFileName)"),
-            options: .atomic
-        )
-        try preparedData.write(
+        try Data(contentsOf: preparedURL, options: .mappedIfSafe).write(
             to: documentsURL.appending(path: "overlays/\(fileName)"),
             options: .atomic
         )
@@ -124,13 +119,25 @@ actor ImageStore {
             fileName: fileName,
             width: preparedDimensions.width,
             height: preparedDimensions.height,
-            sourceFileName: sourceFileName,
+            sourceFileName: Self.bundledSourceName(sourceURL.lastPathComponent),
             sourceWidth: sourceDimensions.width,
             sourceHeight: sourceDimensions.height,
             crop: crop,
             canvasAspect: 3.0 / 4.0,
             addedAt: addedAt
         )
+    }
+
+    /// Built-in pose sources used to be copied into Documents. They are read
+    /// straight from the bundle now, so any copy left by an older version is
+    /// dead weight — roughly 42MB of it. Removing them is best-effort: a copy
+    /// that outlives its record is wasted space, never a correctness problem.
+    func removeLegacyBundledSources(ids: [String]) {
+        for id in ids {
+            try? fileManager.removeItem(
+                at: documentsURL.appending(path: "overlays/sources/\(id)-source.png")
+            )
+        }
     }
 
     private func persistOverlay(
@@ -184,7 +191,7 @@ actor ImageStore {
         let data = try Data(contentsOf: sourceURL, options: .mappedIfSafe)
         let prepared = try renderCroppedJPEG(data, crop: crop, maxPixel: 2048, quality: 0.94)
         try prepared.data.write(to: outputURL, options: .atomic)
-        await LocalImageLoader.shared.invalidate(url: outputURL)
+        LocalImageLoader.shared.invalidate(url: outputURL)
         return prepared.dimensions
     }
 
@@ -240,7 +247,10 @@ actor ImageStore {
 
     func deleteOverlay(_ record: OverlayRecord) {
         try? fileManager.removeItem(at: documentsURL.appending(path: "overlays/\(record.fileName)"))
-        if let sourceFileName = record.sourceFileName {
+        // A bundled source is shipped read-only inside the app, not owned by
+        // this record, so there is nothing here to delete.
+        if let sourceFileName = record.sourceFileName,
+           Self.bundledResource(from: sourceFileName) == nil {
             try? fileManager.removeItem(at: documentsURL.appending(path: "overlays/sources/\(sourceFileName)"))
         }
     }
@@ -273,7 +283,26 @@ actor ImageStore {
 
     nonisolated func overlaySourceURL(_ record: OverlayRecord) -> URL {
         guard let sourceFileName = record.sourceFileName else { return overlayURL(record) }
+        if let resource = Self.bundledResource(from: sourceFileName) {
+            // Falling back to the display JPEG keeps reframing working even if a
+            // resource is ever renamed — a coarser source, not a broken screen.
+            return Bundle.main.url(forResource: resource, withExtension: nil) ?? overlayURL(record)
+        }
         return documentURL.appending(path: "overlays/sources/\(sourceFileName)")
+    }
+
+    /// Marks a `sourceFileName` as living in the app bundle rather than in
+    /// Documents, so `overlaySourceURL` knows where to look. Built-in poses keep
+    /// their full-resolution PNG in the bundle instead of copying it out.
+    private static let bundledSourceScheme = "bundle:"
+
+    private nonisolated static func bundledSourceName(_ resource: String) -> String {
+        bundledSourceScheme + resource
+    }
+
+    private nonisolated static func bundledResource(from sourceFileName: String) -> String? {
+        guard sourceFileName.hasPrefix(bundledSourceScheme) else { return nil }
+        return String(sourceFileName.dropFirst(bundledSourceScheme.count))
     }
 
     nonisolated func customStickerURL(_ record: CustomStickerRecord) -> URL {
@@ -331,10 +360,12 @@ actor ImageStore {
         return (jpeg, (orientedImage.width, orientedImage.height))
     }
 
-    private func imageDimensions(_ data: Data) throws -> (width: Int, height: Int) {
+    /// Reads only the image header, so it never pays to load or decode the whole
+    /// file — which matters for the multi-megabyte bundled pose PNGs.
+    private func imageDimensions(at url: URL) throws -> (width: Int, height: Int) {
         guard
-            let source = CGImageSourceCreateWithData(
-                data as CFData,
+            let source = CGImageSourceCreateWithURL(
+                url as CFURL,
                 [kCGImageSourceShouldCache: false] as CFDictionary
             ),
             let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],

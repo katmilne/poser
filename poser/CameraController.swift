@@ -60,6 +60,12 @@ final class CameraController {
     private(set) var configurationErrorMessage: String?
     var flash: FlashSetting = .off
 
+    /// Tracks configuration here rather than reading `session.inputs`: the
+    /// session is only ever touched on `sessionQueue`, so inspecting it from the
+    /// main actor would race with the configuration it is meant to guard.
+    @ObservationIgnored private var isConfigured = false
+    @ObservationIgnored private var configuration: Task<Void, Error>?
+
     var isReady: Bool { isRunning && hasProducedFrame && !isSwitching }
 
     func requestAccessAndStart() async {
@@ -84,13 +90,33 @@ final class CameraController {
         guard granted else { return }
 
         do {
-            if session.inputs.isEmpty { try configureSession() }
+            try await configureSessionIfNeeded()
             configurationErrorMessage = nil
             startSession()
         } catch {
             configurationErrorMessage = error.localizedDescription
         }
 #endif
+    }
+
+    /// Configuration is now awaited rather than run inline, so leaving and
+    /// re-entering the camera screen quickly can start a second attempt while
+    /// the first is still in flight. Both would add the same inputs and outputs
+    /// and the session would refuse them, so overlapping callers share one
+    /// attempt. A failed attempt is discarded rather than cached: the next start
+    /// should get a real retry.
+    private func configureSessionIfNeeded() async throws {
+        if let configuration { return try await configuration.value }
+
+        let task = Task { try await configureSession() }
+        configuration = task
+        do {
+            try await task.value
+            isConfigured = true
+        } catch {
+            configuration = nil
+            throw error
+        }
     }
 
     func stop() {
@@ -104,29 +130,34 @@ final class CameraController {
 #if targetEnvironment(simulator)
         throw CameraError.unavailable
 #else
-        guard !isSwitching else { return }
+        guard !isSwitching, isConfigured else { return }
         isSwitching = true
         hasProducedFrame = false
         defer { isSwitching = false }
 
         let next: CameraFacing = facing == .back ? .front : .back
-        guard let device = cameraDevice(for: next) else { throw CameraError.unavailable }
-        let input = try AVCaptureDeviceInput(device: device)
         frameDelegate?.reset()
 
-        session.beginConfiguration()
-        let previous = session.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first
-        if let previous { session.removeInput(previous) }
-        if session.canAddInput(input) {
+        // Swapping the input is the same slow AVFoundation work as the initial
+        // configuration, so it belongs on the capture queue too — on the main
+        // actor it stalls the whole screen mid-flip.
+        try await onSessionQueue { [session, videoOutput] in
+            guard let device = Self.cameraDevice(for: next) else { throw CameraError.unavailable }
+            let input = try AVCaptureDeviceInput(device: device)
+
+            session.beginConfiguration()
+            let previous = session.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first
+            if let previous { session.removeInput(previous) }
+            guard session.canAddInput(input) else {
+                if let previous, session.canAddInput(previous) { session.addInput(previous) }
+                session.commitConfiguration()
+                throw CameraError.configurationFailed
+            }
             session.addInput(input)
-            facing = next
-        } else {
-            if let previous, session.canAddInput(previous) { session.addInput(previous) }
+            Self.configureConnections(on: videoOutput, facing: next)
             session.commitConfiguration()
-            throw CameraError.configurationFailed
         }
-        configureConnections()
-        session.commitConfiguration()
+        facing = next
 #endif
     }
 
@@ -155,33 +186,56 @@ final class CameraController {
         }
     }
 
-    private func configureSession() throws {
-        guard let device = cameraDevice(for: facing) else { throw CameraError.unavailable }
-        let input = try AVCaptureDeviceInput(device: device)
-
-        session.beginConfiguration()
-        session.sessionPreset = .photo
-        guard session.canAddInput(input), session.canAddOutput(photoOutput), session.canAddOutput(videoOutput) else {
-            session.commitConfiguration()
-            throw CameraError.configurationFailed
-        }
-        session.addInput(input)
-        session.addOutput(photoOutput)
-        session.addOutput(videoOutput)
-        photoOutput.maxPhotoQualityPrioritization = .quality
-        videoOutput.alwaysDiscardsLateVideoFrames = true
-
+    /// Building the session is slow — device discovery, opening the input, and
+    /// committing the configuration together cost hundreds of milliseconds on a
+    /// real phone — so none of it may happen on the main actor. It used to, and
+    /// that is precisely why the camera screen arrived frozen: every control was
+    /// unresponsive until AVFoundation was finished. All session mutation now
+    /// happens on `sessionQueue` and the main actor only awaits the outcome.
+    private func configureSession() async throws {
         let owner = WeakCameraBox(self)
         let delegate = FirstFrameDelegate {
             Task { @MainActor in owner.value?.hasProducedFrame = true }
         }
         frameDelegate = delegate
-        videoOutput.setSampleBufferDelegate(delegate, queue: sessionQueue)
-        configureConnections()
-        session.commitConfiguration()
+
+        let facing = facing
+        try await onSessionQueue { [session, photoOutput, videoOutput, sessionQueue] in
+            guard let device = Self.cameraDevice(for: facing) else { throw CameraError.unavailable }
+            let input = try AVCaptureDeviceInput(device: device)
+
+            session.beginConfiguration()
+            session.sessionPreset = .photo
+            guard session.canAddInput(input), session.canAddOutput(photoOutput), session.canAddOutput(videoOutput) else {
+                session.commitConfiguration()
+                throw CameraError.configurationFailed
+            }
+            session.addInput(input)
+            session.addOutput(photoOutput)
+            session.addOutput(videoOutput)
+            photoOutput.maxPhotoQualityPrioritization = .quality
+            videoOutput.alwaysDiscardsLateVideoFrames = true
+            videoOutput.setSampleBufferDelegate(delegate, queue: sessionQueue)
+            Self.configureConnections(on: videoOutput, facing: facing)
+            session.commitConfiguration()
+        }
     }
 
-    private func configureConnections() {
+    /// Hands `work` to the capture queue and resumes the caller with its result,
+    /// so callers can await session work without blocking the main actor.
+    private func onSessionQueue<T: Sendable>(
+        _ work: @escaping @Sendable () throws -> T
+    ) async throws -> T {
+        let queue = sessionQueue
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async { continuation.resume(with: Result { try work() }) }
+        }
+    }
+
+    private nonisolated static func configureConnections(
+        on videoOutput: AVCaptureVideoDataOutput,
+        facing: CameraFacing
+    ) {
         if let connection = videoOutput.connection(with: .video) {
             connection.videoRotationAngle = 90
             connection.isVideoMirrored = facing == .front
@@ -197,7 +251,7 @@ final class CameraController {
         }
     }
 
-    private func cameraDevice(for facing: CameraFacing) -> AVCaptureDevice? {
+    private nonisolated static func cameraDevice(for facing: CameraFacing) -> AVCaptureDevice? {
         let position: AVCaptureDevice.Position = facing == .front ? .front : .back
         let discovery = AVCaptureDevice.DiscoverySession(
             deviceTypes: [.builtInWideAngleCamera],
