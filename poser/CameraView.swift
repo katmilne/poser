@@ -14,9 +14,12 @@ struct CameraView: View {
     @State private var countdown: Int?
     @State private var captureBusy = false
     @State private var ghostHidden = false
-    @State private var ghostOffset: CGSize = .zero
-    @State private var ghostScale: CGFloat = 1
-    @State private var normalizedCaptureCrop = NormalizedCrop.full
+    /// Nil until the preview has measured the capture frame. Deliberately not
+    /// defaulted to `.full`: that default is what silently saved the whole
+    /// sensor when the crop failed to arrive, and a wrongly-framed photo looks
+    /// perfectly normal on its own. Better to know than to guess.
+    @State private var normalizedCaptureCrop: NormalizedCrop?
+    @State private var captureFrameInWindow = CGRect.zero
     @State private var errorMessage: String?
     @State private var referenceStripCollapsed = false
 
@@ -25,90 +28,89 @@ struct CameraView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            // Match the stock Camera app: show the full 4:3 sensor (no
-            // aspect-fill crop) in a full-width region pinned just below the
-            // top tool bar. The framing, the captured photo, and the pose guide
-            // then all share exactly this rectangle.
-            // Top bar: 8pt top padding + 46pt controls, plus an 8pt gap.
-            let cameraWidth = proxy.size.width
-            let cameraHeight = cameraWidth * 4 / 3
-            let cameraTop: CGFloat = 62
-            let cameraCenter = CGPoint(
-                x: cameraWidth / 2,
-                y: cameraTop + cameraHeight / 2
+        ZStack {
+            Theme.Colors.black.ignoresSafeArea()
+
+            // INVARIANT: the viewfinder is edge-to-edge — it fills the whole
+            // screen, safe areas included, and the controls float on top of it.
+            // Never box it into a sensor-shaped rect (e.g. width * 4/3 pinned
+            // below the top bar): that letterboxes the feed into black bars,
+            // which is a regression this screen has repeatedly suffered.
+            //
+            // The preview layer is .resizeAspectFill, so the 3:4 sensor feed
+            // scales until it covers the screen's height and its width spills
+            // off the sides. `normalizedPhotoCrop` reports the sensor region
+            // behind `CaptureFrameMetrics.rect` — already 3:4, so ImageStore's
+            // trim is a no-op and the photo is exactly the bracketed frame.
+            CameraViewport(
+                camera: camera,
+                captureFrameInWindow: captureFrameInWindow,
+                normalizedPhotoCrop: $normalizedCaptureCrop
             )
+            .ignoresSafeArea()
 
-            ZStack {
-                Theme.Colors.black.ignoresSafeArea()
-                CameraViewport(
-                    camera: camera,
-                    normalizedGuideRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-                    normalizedPhotoCrop: $normalizedCaptureCrop
-                )
-                .frame(width: cameraWidth, height: cameraHeight)
-                .position(cameraCenter)
-                .clipped()
+            // The capture frame and the pose guide are one and the same rect:
+            // full width, 3:4 tall, centred — which is exactly what ImageStore's
+            // `threeByFourPixelRect` keeps of the screen. The brackets are what
+            // tell the user which part of the viewfinder survives the crop, so
+            // this layer must stay in lockstep with that trim.
+            //
+            // Note this boxes the *guide*, never the preview: the feed stays
+            // edge-to-edge and undimmed outside the frame.
+            // Laid out in the safe area, unlike the preview beneath it: the
+            // frame is anchored to the top bar, which lives in the safe area
+            // too. `PreviewView` re-bases the same anchor for its own
+            // full-screen coordinates.
+            CaptureFrame(
+                ghost: camera.authorizationStatus == .authorized ? appState.selectedGhost : nil,
+                ghostFlipped: appState.ghostFlipped,
+                ghostOpacity: ghostHidden ? 0 : appState.ghostOpacity
+            )
+            .allowsHitTesting(false)
+            .onPreferenceChange(CaptureFrameRectKey.self) { captureFrameInWindow = $0 }
 
-                if camera.authorizationStatus == .authorized, let ghost = appState.selectedGhost {
-                    GhostCaptureOverlay(
-                        ghost: ghost,
-                        flipped: appState.ghostFlipped,
-                        opacity: ghostHidden ? 0 : appState.ghostOpacity,
-                        offset: $ghostOffset,
-                        scale: $ghostScale
-                    )
-                    .frame(width: cameraWidth, height: cameraHeight)
-                    .position(cameraCenter)
+            VStack(spacing: 0) {
+                cameraTopBar
+                    .padding(.horizontal, 16)
+                    .padding(.top, CaptureFrameMetrics.topBarPadding)
+                Spacer()
+
+                if camera.authorizationStatus == .denied || camera.authorizationStatus == .restricted {
+                    cameraPermissionCard
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
+                } else if let message = camera.configurationErrorMessage {
+                    cameraUnavailableCard(message)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 24)
                 }
 
-                VStack(spacing: 0) {
-                    cameraTopBar
-                        .padding(.horizontal, 16)
-                        .padding(.top, 8)
-                    Spacer()
+                referenceStrip
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 12)
+                cameraBottomBar
+                    .padding(.horizontal, 30)
+                    .padding(.bottom, 20)
+            }
 
-                    if camera.authorizationStatus == .denied || camera.authorizationStatus == .restricted {
-                        cameraPermissionCard
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 24)
-                    } else if let message = camera.configurationErrorMessage {
-                        cameraUnavailableCard(message)
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 24)
-                    }
-
-                    referenceStrip
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 12)
-                    cameraBottomBar
-                        .padding(.horizontal, 30)
-                        .padding(.bottom, 20)
-                }
-
-                if let countdown {
-                    Color.black.opacity(0.16).ignoresSafeArea()
-                    VStack(spacing: 14) {
-                        GlassSurface(cornerRadius: 64) {
-                            Text("\(countdown)")
-                                .font(.system(size: 72, weight: .black, design: .rounded))
-                                .foregroundStyle(.white)
-                                .frame(width: 128, height: 128)
-                        }
-                        Text("HOLD THAT POSE")
-                            .font(.system(size: 14, weight: .black, design: .monospaced))
-                            .tracking(2)
+            if let countdown {
+                Color.black.opacity(0.16).ignoresSafeArea()
+                VStack(spacing: 14) {
+                    GlassSurface(cornerRadius: 64) {
+                        Text("\(countdown)")
+                            .font(.system(size: 72, weight: .black, design: .rounded))
                             .foregroundStyle(.white)
+                            .frame(width: 128, height: 128)
                     }
-                    .transition(.opacity)
+                    Text("HOLD THAT POSE")
+                        .font(.system(size: 14, weight: .black, design: .monospaced))
+                        .tracking(2)
+                        .foregroundStyle(.white)
                 }
+                .transition(.opacity)
             }
         }
         .task { await camera.requestAccessAndStart() }
-        .onChange(of: appState.selectedGhost?.id, initial: true) {
-            ghostOffset = .zero
-            ghostScale = 1
-        }
         .onDisappear { camera.stop() }
         .alert("Camera hiccup", isPresented: Binding(
             get: { errorMessage != nil },
@@ -129,7 +131,7 @@ struct CameraView: View {
                         .tracking(1.8)
                         .foregroundStyle(Theme.Colors.ink)
                         .padding(.horizontal, 18)
-                        .frame(height: 46)
+                        .frame(height: CaptureFrameMetrics.topBarHeight)
                 }
                 Spacer()
                 GlassIconButton(
@@ -302,6 +304,11 @@ struct CameraView: View {
             countdown = nil
         }
 
+        guard let normalizedCaptureCrop else {
+            errorMessage = "The viewfinder is still getting ready. Please try again."
+            return
+        }
+
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         ghostHidden = true
         do {
@@ -340,71 +347,178 @@ struct CameraView: View {
 
 private struct CameraViewport: View {
     let camera: CameraController
-    let normalizedGuideRect: CGRect
-    @Binding var normalizedPhotoCrop: NormalizedCrop
+    let captureFrameInWindow: CGRect
+    @Binding var normalizedPhotoCrop: NormalizedCrop?
 
     var body: some View {
         CameraPreview(
             session: camera.session,
-            normalizedGuideRect: normalizedGuideRect,
+            captureFrameInWindow: captureFrameInWindow,
             normalizedPhotoCrop: $normalizedPhotoCrop
         )
     }
 }
 
-private struct GhostCaptureOverlay: View {
-    let ghost: OverlayRecord
-    let flipped: Bool
-    let opacity: Double
-    @Binding var offset: CGSize
-    @Binding var scale: CGFloat
+/// The one definition of the capture frame: the region of the viewfinder that
+/// survives the 3:4 crop.
+///
+/// Everything that needs this rect derives it from here — the brackets, the pose
+/// guide, and the crop the photo is actually rendered with (via `PreviewView`).
+/// Keep it that way: if the on-screen frame and the crop are computed
+/// separately they will drift, and the brackets will quietly start lying about
+/// what ends up in the photo.
+enum CaptureFrameMetrics {
+    /// Top bar geometry. `cameraTopBar` is laid out from these same constants,
+    /// so the frame tracks the bar automatically instead of restating its size.
+    static let topBarPadding: CGFloat = 8
+    static let topBarHeight: CGFloat = 46
+    /// Breathing room between the bar and the frame.
+    static let gapBelowTopBar: CGFloat = 8
 
-    @State private var dragStart: CGSize = .zero
-    @State private var scaleStart: CGFloat = 1
+    /// The frame hangs just below the top bar rather than a fixed distance from
+    /// centre: the bar is a constant height on every device, but the space
+    /// around it is not, so this is the one anchor that means the same thing on
+    /// every screen.
+    static let dropBelowSafeAreaTop = topBarPadding + topBarHeight + gapBelowTopBar
+
+    /// In safe-area coordinates — what the SwiftUI overlay is laid out in. This
+    /// is the *only* place the frame is defined. The preview does not recompute
+    /// it in its own coordinate space; it is handed the measured rect, so the
+    /// brackets and the crop cannot disagree no matter what the layout does.
+    static func rect(inSafeArea size: CGSize) -> CGRect {
+        let width = size.width
+        let height = min(width * 4 / 3, size.height)
+        // Never let the frame hang off the bottom on a short screen; it gives up
+        // the gap under the bar before it gives up being fully visible.
+        let y = min(max(0, dropBelowSafeAreaTop), size.height - height)
+        return CGRect(x: 0, y: y, width: width, height: height)
+    }
+
+    /// The capture frame as a fraction of the *photo* rather than the screen.
+    ///
+    /// Pure geometry, and deliberately so. The preview aspect-fills a 3:4 photo
+    /// into `viewSize`, which fixes exactly where the photo's (overflowing)
+    /// rendered rect sits; the frame's place inside it is then just division.
+    ///
+    /// This used to go through `metadataOutputRectConverted`, which needs a live
+    /// preview connection and returns nothing before one exists. The crop then
+    /// stayed at its `.full` default — silently saving the whole sensor instead
+    /// of the bracketed area. Geometry cannot arrive late or fail, so the crop
+    /// is always right by the first layout pass.
+    ///
+    /// Returned in *displayed* image space (the photo as the user saw it, after
+    /// rotation and any front-camera mirroring), which is what
+    /// `ImageStore.renderCroppedJPEG` applies its crops in.
+    static func photoCrop(
+        for frame: CGRect,
+        in viewSize: CGSize,
+        photoAspect: CGFloat = 3.0 / 4.0
+    ) -> NormalizedCrop? {
+        guard viewSize.width > 0, viewSize.height > 0, photoAspect > 0,
+              !frame.isEmpty, !frame.isNull else { return nil }
+
+        // Aspect-fill: scale the photo until it covers both axes, then centre it.
+        // Whichever axis overflows hangs off the view symmetrically.
+        let scale = max(viewSize.width / photoAspect, viewSize.height)
+        let rendered = CGSize(width: photoAspect * scale, height: scale)
+        let origin = CGPoint(
+            x: (viewSize.width - rendered.width) / 2,
+            y: (viewSize.height - rendered.height) / 2
+        )
+
+        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let crop = CGRect(
+            x: (frame.minX - origin.x) / rendered.width,
+            y: (frame.minY - origin.y) / rendered.height,
+            width: frame.width / rendered.width,
+            height: frame.height / rendered.height
+        ).intersection(unit)
+        guard !crop.isNull, !crop.isEmpty else { return nil }
+
+        return NormalizedCrop(x: crop.minX, y: crop.minY, width: crop.width, height: crop.height)
+    }
+}
+
+/// Carries the capture frame, measured in window coordinates, from the overlay
+/// that draws it to the preview that crops to it.
+struct CaptureFrameRectKey: PreferenceKey {
+    static let defaultValue = CGRect.zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+/// Marks the region of the viewfinder that survives the 3:4 crop, and holds the
+/// pose guide inside it.
+///
+/// The frame is marked with corner brackets only. The area outside it is left
+/// completely untouched — never dim, tint, or otherwise darken it: the feed is
+/// edge-to-edge and stays that way.
+///
+/// The pose is fixed to this rect and cannot be dragged or pinched: its position
+/// *is* the promise about where the crop lands, so letting it move would break
+/// the only signal the user has. Poses are stored on a 3:4 canvas, so a `.fit`
+/// here fills the frame exactly and the guide lines up with the capture area by
+/// construction. Users who want a different capture area re-crop the pose itself
+/// via "Reframe pose" in the pose library.
+private struct CaptureFrame: View {
+    let ghost: OverlayRecord?
+    let ghostFlipped: Bool
+    let ghostOpacity: Double
 
     var body: some View {
         GeometryReader { proxy in
-            LocalFileImage(url: ImageStore.shared.overlayURL(ghost), contentMode: .fit, maxPixel: 1800)
-                .id(ghost.cropData)
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .scaleEffect(x: flipped ? -scale : scale, y: scale)
-                .offset(offset)
-                .opacity(opacity)
-                .frame(width: proxy.size.width, height: proxy.size.height)
-                .clipped()
-                .contentShape(.rect)
-                .simultaneousGesture(
-                    DragGesture()
-                        .onChanged { value in
-                            let maxX = proxy.size.width * 0.6
-                            let maxY = proxy.size.height * 0.6
-                            offset = CGSize(
-                                width: min(maxX, max(-maxX, dragStart.width + value.translation.width)),
-                                height: min(maxY, max(-maxY, dragStart.height + value.translation.height))
-                            )
-                        }
-                        .onEnded { _ in dragStart = offset }
-                )
-                .simultaneousGesture(
-                    MagnifyGesture()
-                        .onChanged { value in scale = min(2.5, max(0.4, scaleStart * value.magnification)) }
-                        .onEnded { _ in scaleStart = scale }
-                )
-                .onTapGesture(count: 2) {
-                    UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-                    withAnimation(.poserSettle) { resetGhostTransform() }
+            let frame = CaptureFrameMetrics.rect(inSafeArea: proxy.size)
+
+            ZStack {
+                if let ghost {
+                    LocalFileImage(url: ImageStore.shared.overlayURL(ghost), contentMode: .fit, maxPixel: 1800)
+                        .id(ghost.cropData)
+                        .scaleEffect(x: ghostFlipped ? -1 : 1, y: 1)
+                        .opacity(ghostOpacity)
+                        .frame(width: frame.width, height: frame.height)
+                        .clipped()
+                        .position(x: frame.midX, y: frame.midY)
                 }
-                .onChange(of: ghost.id) {
-                    withAnimation(.poserSettle) { resetGhostTransform() }
-                }
+
+                CaptureFrameBrackets()
+                    .stroke(.white.opacity(0.28), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+            }
+            // Hand the preview the rect that was actually drawn, in window
+            // coordinates so it survives the trip across coordinate spaces.
+            .preference(
+                key: CaptureFrameRectKey.self,
+                value: frame.offsetBy(
+                    dx: proxy.frame(in: .global).minX,
+                    dy: proxy.frame(in: .global).minY
+                )
+            )
         }
     }
+}
 
-    private func resetGhostTransform() {
-        offset = .zero
-        scale = 1
-        dragStart = .zero
-        scaleStart = 1
+/// Corner brackets, inset so the strokes sit just inside the capture frame.
+/// Kept deliberately faint and short — enough to read the crop when looked for,
+/// not enough to compete with the subject.
+private struct CaptureFrameBrackets: Shape {
+    var arm: CGFloat = 16
+    var inset: CGFloat = 1
+
+    func path(in rect: CGRect) -> Path {
+        let box = rect.insetBy(dx: inset, dy: inset)
+        var path = Path()
+        for corner in [
+            (CGPoint(x: box.minX, y: box.minY), CGFloat(1), CGFloat(1)),
+            (CGPoint(x: box.maxX, y: box.minY), CGFloat(-1), CGFloat(1)),
+            (CGPoint(x: box.minX, y: box.maxY), CGFloat(1), CGFloat(-1)),
+            (CGPoint(x: box.maxX, y: box.maxY), CGFloat(-1), CGFloat(-1))
+        ] {
+            let (origin, dx, dy) = corner
+            path.move(to: CGPoint(x: origin.x + arm * dx, y: origin.y))
+            path.addLine(to: origin)
+            path.addLine(to: CGPoint(x: origin.x, y: origin.y + arm * dy))
+        }
+        return path
     }
 }
 

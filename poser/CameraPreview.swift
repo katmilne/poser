@@ -3,16 +3,19 @@ import SwiftUI
 
 struct CameraPreview: UIViewRepresentable {
     let session: AVCaptureSession
-    let normalizedGuideRect: CGRect
-    @Binding var normalizedPhotoCrop: NormalizedCrop
+    /// The capture frame as measured by the overlay that draws it. The preview
+    /// crops to this rather than recomputing the frame from its own bounds, so
+    /// the photo is guaranteed to be what the brackets showed.
+    let captureFrameInWindow: CGRect
+    @Binding var normalizedPhotoCrop: NormalizedCrop?
 
     init(
         session: AVCaptureSession,
-        normalizedGuideRect: CGRect = CGRect(x: 0, y: 0, width: 1, height: 1),
-        normalizedPhotoCrop: Binding<NormalizedCrop> = .constant(.full)
+        captureFrameInWindow: CGRect = .zero,
+        normalizedPhotoCrop: Binding<NormalizedCrop?> = .constant(nil)
     ) {
         self.session = session
-        self.normalizedGuideRect = normalizedGuideRect
+        self.captureFrameInWindow = captureFrameInWindow
         _normalizedPhotoCrop = normalizedPhotoCrop
     }
 
@@ -29,16 +32,16 @@ struct CameraPreview: UIViewRepresentable {
 
     func updateUIView(_ uiView: PreviewView, context: Context) {
         uiView.configure(session: session)
-        uiView.normalizedGuideRect = normalizedGuideRect
         uiView.onCropChange = context.coordinator.updateCrop
+        uiView.captureFrameInWindow = captureFrameInWindow
         uiView.setNeedsLayout()
         uiView.updatePhotoCrop()
     }
 
     final class Coordinator {
-        private var normalizedPhotoCrop: Binding<NormalizedCrop>
+        private var normalizedPhotoCrop: Binding<NormalizedCrop?>
 
-        init(normalizedPhotoCrop: Binding<NormalizedCrop>) {
+        init(normalizedPhotoCrop: Binding<NormalizedCrop?>) {
             self.normalizedPhotoCrop = normalizedPhotoCrop
         }
 
@@ -53,7 +56,7 @@ struct CameraPreview: UIViewRepresentable {
 
 final class PreviewView: UIView {
     let previewLayer = AVCaptureVideoPreviewLayer()
-    var normalizedGuideRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+    var captureFrameInWindow = CGRect.zero
     var onCropChange: ((NormalizedCrop) -> Void)?
 
     override init(frame: CGRect) {
@@ -83,6 +86,13 @@ final class PreviewView: UIView {
         previewLayer.videoGravity = .resizeAspectFill
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        // The window rect handed in by the overlay only means something once
+        // this view is in a window to convert it against.
+        updatePhotoCrop()
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         previewLayer.frame = bounds
@@ -94,22 +104,16 @@ final class PreviewView: UIView {
         updatePhotoCrop()
     }
 
+    /// Reports the region of the photo behind the capture frame, so the saved
+    /// image is exactly the rect the brackets drew.
+    ///
+    /// The frame is converted from the overlay's window coordinates rather than
+    /// recomputed here: one measured rect, no second definition to drift from
+    /// the first.
     func updatePhotoCrop() {
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let layerRect = CGRect(
-            x: normalizedGuideRect.minX * bounds.width,
-            y: normalizedGuideRect.minY * bounds.height,
-            width: normalizedGuideRect.width * bounds.width,
-            height: normalizedGuideRect.height * bounds.height
-        )
-        let converted = previewLayer.metadataOutputRectConverted(fromLayerRect: layerRect)
-            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
-        guard !converted.isNull, !converted.isEmpty else { return }
-        onCropChange?(NormalizedCrop(
-            x: converted.minX,
-            y: converted.minY,
-            width: converted.width,
-            height: converted.height
-        ))
+        guard bounds.width > 0, bounds.height > 0, window != nil else { return }
+        let layerRect = convert(captureFrameInWindow, from: nil)
+        guard let crop = CaptureFrameMetrics.photoCrop(for: layerRect, in: bounds.size) else { return }
+        onCropChange?(crop)
     }
 }

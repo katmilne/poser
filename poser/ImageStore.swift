@@ -284,6 +284,13 @@ actor ImageStore {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
+    /// `normalizedCrop` is the rect the viewfinder actually showed: the preview
+    /// is aspect-fill, so the sensor's width spills off the sides of the screen
+    /// and that unseen overflow is discarded here — what you framed is what
+    /// survives. `renderCroppedJPEG` then squares the result up to 3:4 for the
+    /// album (see `threeByFourPixelRect`). The screen slice is taller than 3:4,
+    /// so that step only takes off the top and bottom and never has to give the
+    /// sides back — every pixel in the saved photo is one the user saw.
     private func prepareThreeByFourCapture(
         _ data: Data,
         normalizedCrop: NormalizedCrop
@@ -353,9 +360,6 @@ actor ImageStore {
             let rawHeight = properties[kCGImagePropertyPixelHeight] as? Int
         else { throw StoreError.invalidImage }
 
-        let orientationRawValue = (properties[kCGImagePropertyOrientation] as? NSNumber)?.uint32Value ?? 1
-        let orientation = CGImagePropertyOrientation(rawValue: orientationRawValue) ?? .up
-
         let sourceMaxPixel = max(rawWidth, rawHeight)
         let outputMaxPixel = min(sourceMaxPixel, maxPixel ?? sourceMaxPixel)
         let options: [CFString: Any] = [
@@ -368,14 +372,17 @@ actor ImageStore {
             throw StoreError.invalidImage
         }
 
+        // `kCGImageSourceCreateThumbnailWithTransform` has already applied the
+        // EXIF orientation, so this image is the picture as the user saw it —
+        // and every caller states its crop in that same displayed space. No
+        // rotation of the crop is needed or wanted here.
         let width = orientedImage.width
         let height = orientedImage.height
-        let displayedCrop = cropConvertedToDisplayedOrientation(crop, orientation: orientation)
         let requested = CGRect(
-            x: displayedCrop.x * Double(width),
-            y: displayedCrop.y * Double(height),
-            width: displayedCrop.width * Double(width),
-            height: displayedCrop.height * Double(height)
+            x: crop.x * Double(width),
+            y: crop.y * Double(height),
+            width: crop.width * Double(width),
+            height: crop.height * Double(height)
         ).intersection(CGRect(x: 0, y: 0, width: width, height: height))
         let cropRect = threeByFourPixelRect(inside: requested, imageWidth: width, imageHeight: height)
 
@@ -384,43 +391,6 @@ actor ImageStore {
             let jpeg = encodeJPEG(cropped, quality: quality)
         else { throw StoreError.cannotCreateJPEG }
         return (jpeg, (cropped.width, cropped.height))
-    }
-
-    /// Preview-layer metadata coordinates describe the camera's unrotated
-    /// picture. ImageIO applies the EXIF orientation while decoding, so the
-    /// same crop must be rotated/mirrored before it is applied to those pixels.
-    private func cropConvertedToDisplayedOrientation(
-        _ crop: NormalizedCrop,
-        orientation: CGImagePropertyOrientation
-    ) -> NormalizedCrop {
-        switch orientation {
-        case .up:
-            crop
-        case .upMirrored:
-            NormalizedCrop(x: 1 - crop.x - crop.width, y: crop.y, width: crop.width, height: crop.height)
-        case .down:
-            NormalizedCrop(
-                x: 1 - crop.x - crop.width,
-                y: 1 - crop.y - crop.height,
-                width: crop.width,
-                height: crop.height
-            )
-        case .downMirrored:
-            NormalizedCrop(x: crop.x, y: 1 - crop.y - crop.height, width: crop.width, height: crop.height)
-        case .leftMirrored:
-            NormalizedCrop(x: crop.y, y: crop.x, width: crop.height, height: crop.width)
-        case .right:
-            NormalizedCrop(x: 1 - crop.y - crop.height, y: crop.x, width: crop.height, height: crop.width)
-        case .rightMirrored:
-            NormalizedCrop(
-                x: 1 - crop.y - crop.height,
-                y: 1 - crop.x - crop.width,
-                width: crop.height,
-                height: crop.width
-            )
-        case .left:
-            NormalizedCrop(x: crop.y, y: 1 - crop.x - crop.width, width: crop.height, height: crop.width)
-        }
     }
 
     private func centeredThreeByFourCrop(
