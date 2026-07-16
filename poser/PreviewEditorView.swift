@@ -8,10 +8,11 @@ struct PreviewEditorView: View {
     @Query(sort: \CustomStickerRecord.createdAt, order: .reverse) private var customStickers: [CustomStickerRecord]
 
     let shot: ShotRecord
-    /// Only the capture route needs these: it opens straight from the shutter with
-    /// nothing behind it. From the album, the lightbox already carries share/save,
-    /// so the editor stays a pure decorating surface.
-    var showsExportActions = true
+    /// The capture route opens straight from the shutter on a shot nobody has
+    /// agreed to keep yet: Save is what puts it in the album, and X throws it
+    /// away. From the album the shot is already kept and the lightbox carries
+    /// its own share/save, so the editor stays a pure decorating surface.
+    var isDraft = true
     @State private var sourceImage: UIImage?
     @State private var frameID: String?
     @State private var stickers: [ShotSticker]
@@ -24,10 +25,11 @@ struct PreviewEditorView: View {
     @State private var sharePayload: SharePayload?
     @State private var alertMessage: String?
     @State private var isRendering = false
+    @State private var confirmsDiscard = false
 
-    init(shot: ShotRecord, showsExportActions: Bool = true) {
+    init(shot: ShotRecord, isDraft: Bool = true) {
         self.shot = shot
-        self.showsExportActions = showsExportActions
+        self.isDraft = isDraft
         let edits = shot.edits
         _frameID = State(initialValue: edits?.frameId)
         _stickers = State(initialValue: edits?.stickers ?? [])
@@ -87,9 +89,9 @@ struct PreviewEditorView: View {
                 .animation(.poserGlide, value: selectedStickerID)
                 // Without the action row beneath it the tray is the last thing in the
                 // stack, so it needs the bottom breathing room the row used to give.
-                .padding(.bottom, showsExportActions ? 0 : 12)
+                .padding(.bottom, isDraft ? 0 : 12)
 
-                if showsExportActions {
+                if isDraft {
                     actionRow
                         .padding(.horizontal, 20)
                         .padding(.bottom, 12)
@@ -134,6 +136,16 @@ struct PreviewEditorView: View {
         } message: { _ in
             Text("Photos you've already put it on will keep it.")
         }
+        .confirmationDialog(
+            "Discard this photo?",
+            isPresented: $confirmsDiscard,
+            titleVisibility: .visible
+        ) {
+            Button("Discard photo", role: .destructive) { discardDraft() }
+            Button("Keep editing", role: .cancel) { }
+        } message: {
+            Text("It hasn't been saved to your album yet, so it will be gone for good.")
+        }
         .alert("POSER", isPresented: Binding(
             get: { alertMessage != nil },
             set: { if !$0 { alertMessage = nil } }
@@ -168,11 +180,10 @@ struct PreviewEditorView: View {
                 }
                 GlassIconButton(
                     symbol: "square.and.arrow.down",
-                    accessibilityLabel: "Save decorated photo",
-                    selected: isDecorated,
-                    disabled: !isDecorated
+                    accessibilityLabel: "Save to album",
+                    selected: true
                 ) {
-                    Task { await saveDecoratedToPhotos() }
+                    Task { await saveToAlbum() }
                 }
             }
         }
@@ -455,12 +466,39 @@ struct PreviewEditorView: View {
         }
     }
 
+    /// A draft has nothing behind it, so leaving is leaving it behind: ask, then
+    /// throw the shot away. From the album the photo is already the user's, and
+    /// closing is just putting it down — the edits go with it.
     @MainActor
     private func closeEditor() async {
+        if isDraft {
+            confirmsDiscard = true
+            return
+        }
         isRendering = true
         saveRecipe()
         if isDecorated { _ = await persistDecoratedPreview() }
         isRendering = false
+        dismiss()
+    }
+
+    private func discardDraft() {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        modelContext.delete(shot)
+        try? modelContext.save()
+        Task { await ImageStore.shared.deleteShot(shot) }
+        dismiss()
+    }
+
+    /// Keeping the draft: the record is already in the context, so this only has
+    /// to fix the edits in place and develop the album's preview of them.
+    @MainActor
+    private func saveToAlbum() async {
+        isRendering = true
+        saveRecipe()
+        if isDecorated { _ = await persistDecoratedPreview() }
+        isRendering = false
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
         dismiss()
     }
 
@@ -472,21 +510,6 @@ struct PreviewEditorView: View {
             if let url = await persistDecoratedPreview() { sharePayload = SharePayload(url: url) }
         } else {
             sharePayload = SharePayload(url: ImageStore.shared.shotOriginalURL(shot))
-        }
-    }
-
-    @MainActor
-    private func saveDecoratedToPhotos() async {
-        isRendering = true
-        defer { isRendering = false }
-        guard let url = await persistDecoratedPreview() else { return }
-        do {
-            try await PhotoLibraryService.saveImage(at: url)
-            UINotificationFeedbackGenerator().notificationOccurred(.success)
-            alertMessage = "Decorated copy saved to Camera Roll."
-        } catch {
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            alertMessage = error.localizedDescription
         }
     }
 }

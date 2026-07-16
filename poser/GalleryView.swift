@@ -117,7 +117,7 @@ struct GalleryView: View {
                 Button("Cancel", role: .cancel) { }
             }
             .fullScreenCover(item: $editingShot) { shot in
-                PreviewEditorView(shot: shot, showsExportActions: false)
+                PreviewEditorView(shot: shot, isDraft: false)
             }
             .sheet(item: $sharePayload) { payload in ShareSheet(items: [payload.url]) }
             .alert("Album", isPresented: Binding(

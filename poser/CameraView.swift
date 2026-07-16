@@ -330,17 +330,15 @@ struct CameraView: View {
                 height: stored.height,
                 ghost: stored.ghost
             )
+            // The shot lands in the context so the editor has something to
+            // decorate, but it is a draft until the editor's Save keeps it:
+            // closing with X deletes it again. Nothing reaches the Camera Roll
+            // from here — that is the album lightbox's job, on request.
             modelContext.insert(record)
             try modelContext.save()
             appState.presentedShot = record
-
-            let url = ImageStore.shared.shotOriginalURL(record)
-            Task {
-                do { try await PhotoLibraryService.saveImage(at: url) }
-                catch { errorMessage = error.localizedDescription }
-            }
         } catch {
-            errorMessage = "Capturing or saving the clean photo failed. \(error.localizedDescription)"
+            errorMessage = "Capturing the photo failed. \(error.localizedDescription)"
         }
     }
 }
