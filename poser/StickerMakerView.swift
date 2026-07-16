@@ -3,6 +3,31 @@ import SwiftData
 import SwiftUI
 import UIKit
 
+/// Shows through the transparent parts of a cutout so the user can judge the
+/// mask edges rather than a flat square.
+private struct CheckerboardBackground: View {
+    var square: CGFloat = 14
+
+    var body: some View {
+        Canvas { context, size in
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.Colors.cloud))
+            let columns = Int(ceil(size.width / square))
+            let rows = Int(ceil(size.height / square))
+            for row in 0..<rows {
+                for column in 0..<columns where (row + column).isMultiple(of: 2) {
+                    let rect = CGRect(
+                        x: CGFloat(column) * square,
+                        y: CGFloat(row) * square,
+                        width: square,
+                        height: square
+                    )
+                    context.fill(Path(rect), with: .color(Theme.Colors.mist))
+                }
+            }
+        }
+    }
+}
+
 struct StickerMakerView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -12,7 +37,10 @@ struct StickerMakerView: View {
     @State private var pickerItem: PhotosPickerItem?
     @State private var sourceData: Data?
     @State private var previewImage: UIImage?
+    @State private var cutoutDraft: CutoutDraft?
+    @State private var cutoutImage: UIImage?
     @State private var isCutting = false
+    @State private var isSaving = false
     @State private var errorMessage: String?
     @State private var previewBoxSize: CGSize = .zero
     @State private var zoomScale: CGFloat = 1
@@ -35,7 +63,13 @@ struct StickerMakerView: View {
                 ZStack {
                     RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
                         .fill(Theme.Colors.mist)
-                    if let previewImage {
+                    if let cutoutImage {
+                        CheckerboardBackground()
+                        Image(uiImage: cutoutImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .padding(20)
+                    } else if let previewImage {
                         GeometryReader { proxy in
                             Image(uiImage: previewImage)
                                 .resizable()
@@ -95,53 +129,70 @@ struct StickerMakerView: View {
                 .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
                 .padding(.horizontal, 30)
 
-                if previewImage != nil {
+                if cutoutDraft != nil {
+                    Text("KEEP THIS STICKER?")
+                        .font(.system(size: 10, weight: .black, design: .monospaced))
+                        .tracking(1.1)
+                        .foregroundStyle(Theme.Colors.textDim)
+                } else if previewImage != nil {
                     Text("DRAG TO POSITION · PINCH TO ZOOM")
                         .font(.system(size: 10, weight: .black, design: .monospaced))
                         .tracking(1.1)
                         .foregroundStyle(Theme.Colors.textDim)
                 }
 
-                HStack(spacing: 12) {
-                    GlassTextButton(
-                        title: sourceData == nil ? "TAKE PHOTO" : "RETAKE",
-                        disabled: sourceData == nil && !camera.isReady
-                    ) {
-                        if sourceData == nil {
-                            Task { await takePhoto() }
-                        } else {
-                            sourceData = nil
-                            previewImage = nil
-                            pickerItem = nil
-                            resetImageTransform()
+                if cutoutDraft != nil {
+                    HStack(spacing: 12) {
+                        GlassTextButton(title: "BACK", disabled: isSaving) {
+                            withAnimation(.poserGlide) { discardCutout() }
+                        }
+                        GlassTextButton(title: "ACCEPT", disabled: isSaving) {
+                            Task { await acceptCutout() }
                         }
                     }
+                    .padding(.horizontal, 18)
+                } else {
+                    HStack(spacing: 12) {
+                        GlassTextButton(
+                            title: sourceData == nil ? "TAKE PHOTO" : "RETAKE",
+                            disabled: sourceData == nil && !camera.isReady
+                        ) {
+                            if sourceData == nil {
+                                Task { await takePhoto() }
+                            } else {
+                                sourceData = nil
+                                previewImage = nil
+                                pickerItem = nil
+                                resetImageTransform()
+                            }
+                        }
 
-                    PhotosPicker(selection: $pickerItem, matching: .images) {
-                        GlassSurface(cornerRadius: Theme.Radius.pill, interactive: true) {
-                            Text(sourceData == nil ? "FROM PHOTOS" : "PICK ANOTHER")
-                                .font(.system(size: 15, weight: .bold))
-                                .foregroundStyle(Theme.Colors.ink)
-                                .padding(.horizontal, 18)
-                                .frame(height: 48)
+                        PhotosPicker(selection: $pickerItem, matching: .images) {
+                            GlassSurface(cornerRadius: Theme.Radius.pill, interactive: true) {
+                                Text(sourceData == nil ? "FROM PHOTOS" : "PICK ANOTHER")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundStyle(Theme.Colors.ink)
+                                    .padding(.horizontal, 18)
+                                    .frame(height: 48)
+                            }
                         }
                     }
-                }
-                .padding(.horizontal, 18)
+                    .padding(.horizontal, 18)
 
-                GlassTextButton(title: "CUT IT OUT", disabled: sourceData == nil || isCutting) {
-                    Task { await cutOut() }
+                    GlassTextButton(title: "CUT IT OUT", disabled: sourceData == nil || isCutting) {
+                        Task { await cutOut() }
+                    }
                 }
                 Spacer()
             }
             .padding(.top, 10)
 
-            if isCutting {
+            if isCutting || isSaving {
                 Color.black.opacity(0.28).ignoresSafeArea()
                 GlassSurface(cornerRadius: Theme.Radius.lg) {
                     VStack(spacing: 12) {
                         ProgressView()
-                        Text("LIFTING THE SUBJECT…")
+                        Text(isCutting ? "LIFTING THE SUBJECT…" : "SAVING STICKER…")
                             .font(.system(size: 13, weight: .black, design: .monospaced))
                     }
                     .padding(24)
@@ -236,7 +287,33 @@ struct StickerMakerView: View {
         isCutting = true
         defer { isCutting = false }
         do {
-            let stored = try await SubjectCutoutService.shared.createSticker(from: dataToCut)
+            let draft = try await SubjectCutoutService.shared.makeCutout(from: dataToCut)
+            guard let image = UIImage(data: draft.pngData) else {
+                errorMessage = SubjectCutoutService.CutoutError.invalidImage.localizedDescription
+                return
+            }
+            withAnimation(.poserGlide) {
+                cutoutDraft = draft
+                cutoutImage = image
+            }
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func discardCutout() {
+        cutoutDraft = nil
+        cutoutImage = nil
+    }
+
+    @MainActor
+    private func acceptCutout() async {
+        guard let cutoutDraft else { return }
+        isSaving = true
+        defer { isSaving = false }
+        do {
+            let stored = try await SubjectCutoutService.shared.persist(cutoutDraft)
             let record = CustomStickerRecord(
                 id: stored.id,
                 fileName: stored.fileName,

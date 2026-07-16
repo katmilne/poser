@@ -21,7 +21,7 @@ actor SubjectCutoutService {
         }
     }
 
-    func createSticker(from sourceData: Data) throws -> PersistedCustomSticker {
+    func makeCutout(from sourceData: Data) throws -> CutoutDraft {
         try autoreleasepool {
             let preparedData = downsampleJPEG(sourceData, maxPixel: 2048) ?? sourceData
             let temporaryURL = FileManager.default.temporaryDirectory
@@ -46,29 +46,44 @@ actor SubjectCutoutService {
                 from: handler,
                 croppedToInstancesExtent: true
             )
-            let id = UUID().uuidString.lowercased()
-            let fileName = "\(id).png"
-            let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-                .appending(path: "stickers", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let destination = directory.appending(path: fileName)
-
             let context = CIContext(options: [.cacheIntermediates: false])
             defer { context.clearCaches() }
-            guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else { throw CutoutError.writeFailed }
-            try context.writePNGRepresentation(
-                of: CIImage(cvPixelBuffer: maskedBuffer),
-                to: destination,
-                format: .RGBA8,
-                colorSpace: colorSpace
-            )
-            return PersistedCustomSticker(
-                id: id,
-                fileName: fileName,
+            guard
+                let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+                let pngData = context.pngRepresentation(
+                    of: CIImage(cvPixelBuffer: maskedBuffer),
+                    format: .RGBA8,
+                    colorSpace: colorSpace
+                )
+            else { throw CutoutError.writeFailed }
+
+            return CutoutDraft(
+                pngData: pngData,
                 width: CVPixelBufferGetWidth(maskedBuffer),
                 height: CVPixelBufferGetHeight(maskedBuffer)
             )
         }
+    }
+
+    /// Only called once the cutout has been accepted, so a rejected draft never
+    /// leaves a file behind.
+    func persist(_ draft: CutoutDraft) throws -> PersistedCustomSticker {
+        let id = UUID().uuidString.lowercased()
+        let fileName = "\(id).png"
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appending(path: "stickers", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try draft.pngData.write(to: directory.appending(path: fileName), options: .atomic)
+        } catch {
+            throw CutoutError.writeFailed
+        }
+        return PersistedCustomSticker(
+            id: id,
+            fileName: fileName,
+            width: draft.width,
+            height: draft.height
+        )
     }
 
     private func downsampleJPEG(_ data: Data, maxPixel: Int) -> Data? {

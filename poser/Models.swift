@@ -206,6 +206,13 @@ nonisolated struct PersistedCustomSticker: Sendable {
     let height: Int
 }
 
+/// A finished cutout held in memory while the user decides whether to keep it.
+nonisolated struct CutoutDraft: Sendable {
+    let pngData: Data
+    let width: Int
+    let height: Int
+}
+
 nonisolated struct OverlaySnapshot: Sendable {
     let id: String
     let fileName: String
