@@ -119,7 +119,7 @@ struct GalleryView: View {
             .fullScreenCover(item: $editingShot) { shot in
                 PreviewEditorView(shot: shot, isDraft: false)
             }
-            .sheet(item: $sharePayload) { payload in ShareSheet(items: [payload.url]) }
+            .shareSheet(payload: $sharePayload)
             .alert("Album", isPresented: Binding(
                 get: { saveMessage != nil },
                 set: { if !$0 { saveMessage = nil } }

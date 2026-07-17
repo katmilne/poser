@@ -26,6 +26,14 @@ struct PreviewEditorView: View {
     @State private var alertMessage: String?
     @State private var isRendering = false
     @State private var confirmsDiscard = false
+    @State private var renderedComposite: RenderedComposite?
+
+    /// The recipe the decorated file on disk was developed from. Comparing the
+    /// live recipe against it is what tells a re-render from a re-read.
+    private struct RenderedComposite: Equatable {
+        var frameID: String?
+        var stickers: [ShotSticker]
+    }
 
     init(shot: ShotRecord, isDraft: Bool = true) {
         self.shot = shot
@@ -33,6 +41,11 @@ struct PreviewEditorView: View {
         let edits = shot.edits
         _frameID = State(initialValue: edits?.frameId)
         _stickers = State(initialValue: edits?.stickers ?? [])
+        // An album shot arrives with its composite already developed, so the
+        // first share is a read unless the user actually changes something.
+        _renderedComposite = State(initialValue: shot.decoratedFileName == nil ? nil : edits.map {
+            RenderedComposite(frameID: $0.frameId, stickers: $0.stickers)
+        })
     }
 
     private var isDecorated: Bool { frameID != nil || !stickers.isEmpty }
@@ -122,7 +135,7 @@ struct PreviewEditorView: View {
         .fullScreenCover(isPresented: $showsStickerMaker) {
             StickerMakerView { custom in addCustomSticker(custom) }
         }
-        .sheet(item: $sharePayload) { payload in ShareSheet(items: [payload.url]) }
+        .shareSheet(payload: $sharePayload)
         .confirmationDialog(
             "Remove this sticker from your pack?",
             isPresented: Binding(
@@ -449,18 +462,33 @@ struct PreviewEditorView: View {
         ).frame(width: Self.exportCanvas.width, height: Self.exportCanvas.height))
         renderer.scale = Self.exportScale
         renderer.proposedSize = ProposedViewSize(Self.exportCanvas)
-        return renderer.uiImage?.jpegData(compressionQuality: 0.92)
+        guard let image = renderer.uiImage else { return nil }
+        // The renderer has to rasterise on the main actor, but encoding what it
+        // produced does not, and at 1536×2048 the encode is long enough to be
+        // felt as a tap that hangs the app.
+        return await Task.detached(priority: .userInitiated) {
+            image.jpegData(compressionQuality: 0.92)
+        }.value
     }
 
     @MainActor
     private func persistDecoratedPreview() async -> URL? {
-        guard isDecorated, let data = await renderedJPEG() else { return nil }
+        guard isDecorated else { return nil }
+        let composite = RenderedComposite(frameID: frameID, stickers: stickers)
+        // Sharing twice, or sharing what Done has already developed, asks for a
+        // composite the file on disk is holding: rendering it again would only
+        // block the main thread to reproduce bytes we have.
+        if composite == renderedComposite, shot.decoratedFileName != nil {
+            return ImageStore.shared.shotDisplayURL(shot)
+        }
+        guard let data = await renderedJPEG() else { return nil }
         do {
             let oldName = shot.decoratedFileName
             let fileName = try await ImageStore.shared.persistDecoratedJPEG(data, shotID: shot.id)
             shot.decoratedFileName = fileName
             try modelContext.save()
             if let oldName, oldName != fileName { await ImageStore.shared.removeDecoratedJPEG(named: oldName) }
+            renderedComposite = composite
             return ImageStore.shared.shotDisplayURL(shot)
         } catch {
             alertMessage = "The edit recipe is safe, but POSER couldn't develop its album preview."
