@@ -9,7 +9,7 @@ struct PreviewEditorView: View {
 
     let shot: ShotRecord
     /// The capture route opens straight from the shutter on a shot nobody has
-    /// agreed to keep yet: Save is what puts it in the album, and X throws it
+    /// agreed to keep yet: Done is what puts it in the album, and X throws it
     /// away. From the album the shot is already kept and the lightbox carries
     /// its own share/save, so the editor stays a pure decorating surface.
     var isDraft = true
@@ -180,10 +180,12 @@ struct PreviewEditorView: View {
                 }
                 GlassIconButton(
                     symbol: "square.and.arrow.down",
-                    accessibilityLabel: "Save to album",
-                    selected: true
+                    accessibilityLabel: "Save to Camera Roll"
                 ) {
-                    Task { await saveToAlbum() }
+                    Task { await saveToCameraRoll() }
+                }
+                GlassTextButton(title: "DONE", selected: true) {
+                    Task { await finishDraft() }
                 }
             }
         }
@@ -493,7 +495,7 @@ struct PreviewEditorView: View {
     /// Keeping the draft: the record is already in the context, so this only has
     /// to fix the edits in place and develop the album's preview of them.
     @MainActor
-    private func saveToAlbum() async {
+    private func finishDraft() async {
         isRendering = true
         saveRecipe()
         if isDecorated { _ = await persistDecoratedPreview() }
@@ -506,11 +508,30 @@ struct PreviewEditorView: View {
     private func share() async {
         isRendering = true
         defer { isRendering = false }
-        if isDecorated {
-            if let url = await persistDecoratedPreview() { sharePayload = SharePayload(url: url) }
-        } else {
-            sharePayload = SharePayload(url: ImageStore.shared.shotOriginalURL(shot))
+        if let url = await currentExportURL() {
+            sharePayload = SharePayload(url: url)
         }
+    }
+
+    @MainActor
+    private func saveToCameraRoll() async {
+        isRendering = true
+        defer { isRendering = false }
+        guard let url = await currentExportURL() else { return }
+        do {
+            try await PhotoLibraryService.saveImage(at: url)
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            alertMessage = "Saved to Camera Roll."
+        } catch {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            alertMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func currentExportURL() async -> URL? {
+        if isDecorated { return await persistDecoratedPreview() }
+        return ImageStore.shared.shotOriginalURL(shot)
     }
 }
 

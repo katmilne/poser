@@ -6,7 +6,9 @@
 - Reference implementation: `/Users/kat/Dev/Poser-react` (Expo/React Native). Its `src/app` screens and `src/components` files are the behavioral/pixel source of truth.
 - Simulator build: `xcodebuild -project poser.xcodeproj -scheme poser -configuration Debug -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build`.
 - No unit/UI test target currently exists. Real camera validation requires a physical iPhone.
-- Argent CLI is installed, but Argent MCP device tools were not exposed in the 2026-07-14 session.
+- Environment re-inspected on 2026-07-16: this is a native iOS project (not React Native/Expo),
+  with no Metro server, package manager, unit/UI test target, lint task, formatter task, or CI workflow.
+- Argent MCP device tools are available; prefer the booted iPhone simulator for UI validation.
 
 # Performance Invariants
 

@@ -331,7 +331,7 @@ struct CameraView: View {
                 ghost: stored.ghost
             )
             // The shot lands in the context so the editor has something to
-            // decorate, but it is a draft until the editor's Save keeps it:
+            // decorate, but it is a draft until the editor's Done keeps it:
             // closing with X deletes it again. Nothing reaches the Camera Roll
             // from here — that is the album lightbox's job, on request.
             modelContext.insert(record)
