@@ -56,6 +56,14 @@
 
 # UI Invariants
 
+- **RevenueCat's `premium` entitlement is the only production unlock signal.** Never infer access
+  from a purchased product identifier. Onboarding must explicitly load offering `onboarding` and
+  its custom packages `annual_7_day_trial` / `annual_intro_30_day`; contextual and Settings
+  paywalls use `offerings.current`, falling back to offering `default`. Introductory-offer copy and
+  CTAs are shown only after RevenueCat reports the selected product eligible; unknown or ineligible
+  users get ordinary yearly copy. The app must be configured with Poser's public Apple `appl_…`
+  SDK key, never the key from another RevenueCat app.
+
 - **The camera viewfinder is edge-to-edge.** `CameraView` fills the entire screen with the
   preview (safe areas included) and floats the controls on top. Do not box it into a
   sensor-shaped rect (`width * 4/3` pinned below the top bar, or any similar "match the stock

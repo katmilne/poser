@@ -79,6 +79,7 @@ struct PaywallView: View {
             }
         }
         .foregroundStyle(Theme.Colors.ink)
+        .task { await premium.loadOfferings() }
         .onChange(of: premium.isUnlocked) { _, unlocked in
             if unlocked, context == .onboarding { close() }
         }
@@ -130,7 +131,11 @@ struct PaywallView: View {
                 }
             }
 
-            if !premium.storeIsLive {
+            if premium.isLoadingOfferings {
+                ProgressView()
+                    .tint(Theme.Colors.ink)
+                    .accessibilityLabel("Loading App Store pricing")
+            } else if selectedPlan?.package == nil {
                 Text("APP STORE PRICING UNAVAILABLE RIGHT NOW")
                     .font(.system(size: 10, weight: .black, design: .monospaced))
                     .tracking(1)
@@ -152,7 +157,7 @@ struct PaywallView: View {
                 }
             }
 
-            Text("Subscriptions renew automatically until cancelled in App Store settings. Lifetime is a one-time purchase.")
+            Text(legalText)
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(Theme.Colors.textDim)
                 .multilineTextAlignment(.center)
@@ -163,12 +168,14 @@ struct PaywallView: View {
 
     private var ctaTitle: String {
         if premium.isPurchasing { return "CONTACTING APP STORE…" }
-        switch selectedPlan?.kind {
-        case .yearly: return "START 7-DAY FREE TRIAL"
-        case .yearlyIntro: return "START FOR $0.99"
-        case .lifetime: return "UNLOCK FOREVER"
-        default: return "CONTINUE"
+        return selectedPlan?.ctaTitle ?? "CONTINUE"
+    }
+
+    private var legalText: String {
+        if context == .onboarding {
+            return "Yearly subscriptions renew automatically until cancelled in App Store settings. Introductory offers are limited to eligible customers."
         }
+        return "Subscriptions renew automatically until cancelled in App Store settings. Lifetime is a one-time purchase. Introductory offers are limited to eligible customers."
     }
 
     private func close() {

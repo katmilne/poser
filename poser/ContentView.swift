@@ -43,7 +43,7 @@ struct ContentView: View {
             await BundledPoseCatalog.seedIfNeeded(in: modelContext)
         }
         .task {
-            // StyleSnap's one-time "discover Premium" nudge: shown once, on
+            // Poser's one-time "discover Premium" nudge: shown once, on
             // the user's 2nd app session, never during first-run onboarding.
             sessionCount += 1
             guard onboarded, sessionCount == 2, !premiumNudgeShown else { return }

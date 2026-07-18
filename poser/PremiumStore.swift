@@ -48,6 +48,7 @@ struct PaywallPlan: Identifiable {
     let price: String
     let caption: String
     let badge: String?
+    let ctaTitle: String
     let package: Package?
 
     var id: String { kind.rawValue }
@@ -57,12 +58,15 @@ struct PaywallPlan: Identifiable {
 /// limits, backed by RevenueCat.
 ///
 /// Catalog (App Store Connect + RevenueCat, bundle `space.concurrent.poser`,
-/// all attached to the one `premium` entitlement, offering `default`):
-///   - `space.concurrent.poser.monthly`        $0.99/mo
+/// all attached to the one `premium` entitlement):
+///   - `space.concurrent.poser.monthly`        $1.99/mo
 ///   - `space.concurrent.poser.yearly`         $9.99/yr, 7-day free trial
 ///   - `space.concurrent.poser.yearly_intro30` $9.99/yr, $0.99 first 30 days
-///     (RevenueCat package identifier `yearly_intro30`)
-///   - `space.concurrent.poser.lifetime`       $24.99 one-time
+///   - `space.concurrent.poser.lifetime`       $14.99 one-time
+///
+/// Offering `onboarding` contains custom packages `annual_7_day_trial` and
+/// `annual_intro_30_day`. The in-app paywall uses RevenueCat's current
+/// offering, falling back to offering `default`.
 ///
 /// Free tier: 3 poses from Photos, 3 custom cutout stickers. Lapse never
 /// deletes anything — records created while premium stay usable; only the
@@ -78,11 +82,21 @@ final class PremiumStore {
     static let entitlementID = "premium"
     static let freePoseLimit = 3
     static let freeStickerLimit = 3
-    static let yearlyIntroPackageID = "yearly_intro30"
+    static let onboardingOfferingID = "onboarding"
+    static let defaultOfferingID = "default"
+    static let onboardingTrialPackageID = "annual_7_day_trial"
+    static let onboardingIntroPackageID = "annual_intro_30_day"
+
+    private static let monthlyProductID = "space.concurrent.poser.monthly"
+    private static let yearlyProductID = "space.concurrent.poser.yearly"
+    private static let yearlyIntroProductID = "space.concurrent.poser.yearly_intro30"
+    private static let lifetimeProductID = "space.concurrent.poser.lifetime"
 
     private(set) var isPremium = false
     private(set) var offerings: Offerings?
+    private(set) var isLoadingOfferings = false
     private(set) var isPurchasing = false
+    private(set) var introEligibility: [String: IntroEligibilityStatus] = [:]
     var purchaseError: String?
 
 #if DEBUG
@@ -103,7 +117,7 @@ final class PremiumStore {
     var storeIsLive: Bool { Purchases.isConfigured }
 
     init() {
-        guard !Self.apiKey.contains("REPLACE") else { return }
+        guard Self.apiKey.hasPrefix("appl_"), !Self.apiKey.contains("REPLACE") else { return }
         Purchases.logLevel = .warn
         Purchases.configure(withAPIKey: Self.apiKey)
         Task {
@@ -111,12 +125,45 @@ final class PremiumStore {
                 apply(info)
             }
         }
-        Task { await loadOfferings() }
+        Task {
+            await refreshCustomerInfo()
+            await loadOfferings()
+        }
     }
 
     func loadOfferings() async {
-        guard storeIsLive else { return }
-        offerings = try? await Purchases.shared.offerings()
+        guard storeIsLive, !isLoadingOfferings else { return }
+        isLoadingOfferings = true
+        defer { isLoadingOfferings = false }
+
+        do {
+            let loaded = try await Purchases.shared.offerings()
+            offerings = loaded
+
+            let packages = [
+                validatedPackage(
+                    loaded.all[Self.onboardingOfferingID]?.package(identifier: Self.onboardingTrialPackageID),
+                    productID: Self.yearlyProductID
+                ),
+                validatedPackage(
+                    loaded.all[Self.onboardingOfferingID]?.package(identifier: Self.onboardingIntroPackageID),
+                    productID: Self.yearlyIntroProductID
+                ),
+                validatedPackage(generalOffering(from: loaded)?.annual, productID: Self.yearlyProductID)
+            ].compactMap { $0 }
+            let productIDs = Array(Set(packages.map(\.storeProduct.productIdentifier)))
+            if productIDs.isEmpty {
+                introEligibility = [:]
+            } else {
+                let eligibility = await Purchases.shared.checkTrialOrIntroDiscountEligibility(
+                    productIdentifiers: productIDs
+                )
+                introEligibility = eligibility.mapValues(\.status)
+            }
+        } catch {
+            offerings = nil
+            introEligibility = [:]
+        }
     }
 
     func purchase(_ plan: PaywallPlan) async {
@@ -127,6 +174,9 @@ final class PremiumStore {
             let result = try await Purchases.shared.purchase(package: package)
             if !result.userCancelled {
                 apply(result.customerInfo)
+                if !isPremium {
+                    purchaseError = "The App Store completed the purchase, but Premium is not active yet. Try Restore Purchases in a moment."
+                }
             }
         } catch {
             purchaseError = Self.friendlyMessage(for: error)
@@ -161,66 +211,129 @@ final class PremiumStore {
 
     /// Settings / contextual paywall: monthly, yearly (trial), lifetime.
     var fullPlans: [PaywallPlan] {
-        [monthlyPlan, yearlyPlan, lifetimePlan]
+        [monthlyPlan, generalYearlyPlan, lifetimePlan]
     }
 
-    /// Onboarding paywall: only the two yearly variants, mirroring StyleSnap —
-    /// 7-day free trial vs. $0.99 first 30 days, same renewal price.
+    /// Onboarding paywall: only the two custom yearly packages from the
+    /// explicitly named `onboarding` offering.
     var onboardingPlans: [PaywallPlan] {
-        [yearlyPlan, yearlyIntroPlan]
+        [onboardingTrialPlan, onboardingIntroPlan]
     }
 
-    private var current: Offering? { offerings?.current }
+    private var onboardingOffering: Offering? {
+        offerings?.all[Self.onboardingOfferingID]
+    }
+
+    private var generalOffering: Offering? {
+        guard let offerings else { return nil }
+        return generalOffering(from: offerings)
+    }
 
     private var monthlyPlan: PaywallPlan {
-        PaywallPlan(
+        let package = validatedPackage(generalOffering?.monthly, productID: Self.monthlyProductID)
+        return PaywallPlan(
             kind: .monthly,
             title: "MONTHLY",
-            price: current?.monthly?.storeProduct.localizedPriceString ?? "$0.99",
+            price: package?.storeProduct.localizedPriceString ?? "$1.99",
             caption: "per month",
             badge: nil,
-            package: current?.monthly
+            ctaTitle: "CHOOSE MONTHLY",
+            package: package
         )
     }
 
-    private var yearlyPlan: PaywallPlan {
-        PaywallPlan(
+    private var generalYearlyPlan: PaywallPlan {
+        let package = validatedPackage(generalOffering?.annual, productID: Self.yearlyProductID)
+        let price = package?.storeProduct.localizedPriceString ?? "$9.99"
+        let eligible = isEligibleForIntroOffer(package)
+        return PaywallPlan(
             kind: .yearly,
             title: "YEARLY",
-            price: current?.annual?.storeProduct.localizedPriceString ?? "$9.99",
-            caption: "per year · 7-day free trial",
+            price: price,
+            caption: eligible ? "7 days free, then \(price)/year" : "per year",
             badge: "BEST VALUE",
-            package: current?.annual
+            ctaTitle: eligible ? "START 7-DAY FREE TRIAL" : "CHOOSE YEARLY",
+            package: package
         )
     }
 
-    private var yearlyIntroPlan: PaywallPlan {
-        let package = current?.package(identifier: Self.yearlyIntroPackageID)
+    private var onboardingTrialPlan: PaywallPlan {
+        let package = validatedPackage(
+            onboardingOffering?.package(identifier: Self.onboardingTrialPackageID),
+            productID: Self.yearlyProductID
+        )
+        let price = package?.storeProduct.localizedPriceString ?? "$9.99"
+        let eligible = isEligibleForIntroOffer(package)
+        return PaywallPlan(
+            kind: .yearly,
+            title: "YEARLY",
+            price: price,
+            caption: eligible ? "7 days free, then \(price)/year" : "per year",
+            badge: eligible ? "7 DAYS FREE" : nil,
+            ctaTitle: eligible ? "START 7-DAY FREE TRIAL" : "CHOOSE YEARLY",
+            package: package
+        )
+    }
+
+    private var onboardingIntroPlan: PaywallPlan {
+        let package = validatedPackage(
+            onboardingOffering?.package(identifier: Self.onboardingIntroPackageID),
+            productID: Self.yearlyIntroProductID
+        )
+        let renewalPrice = package?.storeProduct.localizedPriceString ?? "$9.99"
+        let eligible = isEligibleForIntroOffer(package)
+        let introductoryPrice = package?.localizedIntroductoryPriceString ?? "$0.99"
         return PaywallPlan(
             kind: .yearlyIntro,
             title: "YEARLY",
-            price: "$0.99",
-            caption: "first 30 days, then \(package?.storeProduct.localizedPriceString ?? "$9.99")/year",
-            badge: "INTRO OFFER",
+            price: eligible ? introductoryPrice : renewalPrice,
+            caption: eligible
+                ? "for the first month, then \(renewalPrice)/year"
+                : "per year",
+            badge: eligible ? "INTRO OFFER" : nil,
+            ctaTitle: eligible ? "START FOR \(introductoryPrice)" : "CHOOSE YEARLY",
             package: package
         )
     }
 
     private var lifetimePlan: PaywallPlan {
-        PaywallPlan(
+        let package = validatedPackage(generalOffering?.lifetime, productID: Self.lifetimeProductID)
+        return PaywallPlan(
             kind: .lifetime,
             title: "LIFETIME",
-            price: current?.lifetime?.storeProduct.localizedPriceString ?? "$24.99",
+            price: package?.storeProduct.localizedPriceString ?? "$14.99",
             caption: "one-time · yours forever",
             badge: nil,
-            package: current?.lifetime
+            ctaTitle: "UNLOCK FOREVER",
+            package: package
         )
     }
 
     // MARK: Private
 
+    private func refreshCustomerInfo() async {
+        guard storeIsLive, let info = try? await Purchases.shared.customerInfo() else { return }
+        apply(info)
+    }
+
+    private func generalOffering(from offerings: Offerings) -> Offering? {
+        offerings.current ?? offerings.all[Self.defaultOfferingID]
+    }
+
+    private func validatedPackage(_ package: Package?, productID: String) -> Package? {
+        guard package?.storeProduct.productIdentifier == productID else { return nil }
+        return package
+    }
+
+    private func isEligibleForIntroOffer(_ package: Package?) -> Bool {
+        guard let product = package?.storeProduct,
+              product.introductoryDiscount != nil
+        else { return false }
+        return introEligibility[product.productIdentifier]?.isEligible == true
+    }
+
     private func apply(_ info: CustomerInfo) {
-        isPremium = info.entitlements[Self.entitlementID]?.isActive == true
+        isPremium = info.entitlements.active[Self.entitlementID] != nil
     }
 
     /// RevenueCat error descriptions are developer-facing; users get copy that
