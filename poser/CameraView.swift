@@ -416,7 +416,7 @@ private struct CameraZoomControl: View {
                             .frame(minWidth: 42)
 
                         Slider(value: zoomProgress, in: 0...1)
-                            .tint(Theme.Colors.ink)
+                            .tint(Theme.Colors.sky)
                             .frame(width: 170)
                             .accessibilityLabel("Zoom")
                             .accessibilityValue(Self.accessibilityLabel(for: camera.zoomFactor))
@@ -437,11 +437,11 @@ private struct CameraZoomControl: View {
                                 Text(Self.label(for: factor))
                                     .font(.system(size: 13, weight: .black, design: .rounded))
                                     .monospacedDigit()
-                                    .foregroundStyle(isSelected(factor) ? Theme.Colors.cream : Theme.Colors.ink)
+                                    .foregroundStyle(Theme.Colors.ink)
                                     .frame(width: 42, height: 42)
                                     .background {
                                         if isSelected(factor) {
-                                            Circle().fill(Theme.Colors.ink.opacity(0.88))
+                                            Circle().fill(Theme.Colors.sky)
                                         }
                                     }
                                     .contentShape(.circle)
