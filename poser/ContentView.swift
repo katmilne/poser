@@ -144,6 +144,14 @@ enum BundledPoseCatalog {
     private static let catalogVersion = 10
     private static let catalogVersionKey = "bundledPoseCatalogVersion"
 
+    /// Fresh installs start with one selfie, one solo, and one group pose
+    /// favourited so the camera's pose strip is never empty on first open.
+    private static let starterFavoriteIDs: Set<String> = [
+        "builtin-mirror-phone-selfie",
+        "builtin-sunny-curb-sit",
+        "builtin-friends-cheer"
+    ]
+
     private static let poses = [
         Pose(id: "builtin-cool-sidewalk-sit", name: "sidewalk-sit", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
         Pose(id: "builtin-cool-record-shop-crouch", name: "record-shop-crouch", vibe: "cool"),
@@ -269,6 +277,10 @@ enum BundledPoseCatalog {
     static func seedIfNeeded(in modelContext: ModelContext) async {
         let defaults = UserDefaults.standard
 
+        // Version 0 means the catalog has never been seeded on this device,
+        // i.e. a brand-new user rather than an upgrade or repair pass.
+        let isFirstInstall = defaults.integer(forKey: catalogVersionKey) == 0
+
         do {
             let existing = try modelContext.fetch(FetchDescriptor<OverlayRecord>())
             let recordsByID = Dictionary(uniqueKeysWithValues: existing.map { ($0.id, $0) })
@@ -311,6 +323,9 @@ enum BundledPoseCatalog {
                     record.crop = stored.crop
                     record.canvasAspect = stored.canvasAspect
                     record.tags = pose.tags
+                    if isFirstInstall && starterFavoriteIDs.contains(pose.id) {
+                        record.isFavorite = true
+                    }
                 } else {
                     modelContext.insert(OverlayRecord(
                         id: stored.id,
@@ -323,7 +338,8 @@ enum BundledPoseCatalog {
                         sourceHeight: stored.sourceHeight,
                         crop: stored.crop,
                         canvasAspect: stored.canvasAspect,
-                        tags: pose.tags
+                        tags: pose.tags,
+                        isFavorite: isFirstInstall && starterFavoriteIDs.contains(pose.id)
                     ))
                 }
             }
