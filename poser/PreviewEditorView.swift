@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 
 struct PreviewEditorView: View {
+    @AppStorage(ExportPreferences.includesPolaroidFrameKey) private var includesPolaroidFrame = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(PremiumStore.self) private var premium
@@ -582,8 +583,20 @@ struct PreviewEditorView: View {
 
     @MainActor
     private func currentExportURL() async -> URL? {
-        if isDecorated { return await persistDecoratedPreview() }
-        return ImageStore.shared.shotOriginalURL(shot)
+        let sourceURL: URL
+        if isDecorated {
+            guard let decoratedURL = await persistDecoratedPreview() else { return nil }
+            sourceURL = decoratedURL
+        } else {
+            sourceURL = ImageStore.shared.shotOriginalURL(shot)
+        }
+        guard includesPolaroidFrame else { return sourceURL }
+        do {
+            return try await ImageStore.shared.polaroidExportURL(for: sourceURL)
+        } catch {
+            alertMessage = error.localizedDescription
+            return nil
+        }
     }
 }
 

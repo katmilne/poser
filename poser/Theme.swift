@@ -50,6 +50,17 @@ enum Theme {
     static let charmShadow = Color(red: 44 / 255, green: 61 / 255, blue: 78 / 255).opacity(0.07)
 }
 
+/// One set of proportions for the album card and its optional exported copy.
+/// Keeping these shared prevents the saved border from drifting away from the
+/// polaroid the user sees in the album.
+nonisolated enum PolaroidStyle {
+    static let cardAspect: CGFloat = 5 / 7
+    static let photoAspect: CGFloat = 3 / 4
+    static let sideInsetFraction: CGFloat = 0.055
+    static let outerCornerRadiusFraction: CGFloat = 0.028
+    static let innerCornerRadiusFraction: CGFloat = outerCornerRadiusFraction * 0.6
+}
+
 extension Color {
     init(hex: UInt32, alpha: Double = 1) {
         self.init(

@@ -2,8 +2,6 @@ import SwiftData
 import SwiftUI
 import UIKit
 
-fileprivate let polaroidAspect: CGFloat = 0.714
-
 private struct PocketFrameKey: PreferenceKey {
     static let defaultValue: [String: CGRect] = [:]
     static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
@@ -12,6 +10,7 @@ private struct PocketFrameKey: PreferenceKey {
 }
 
 struct GalleryView: View {
+    @AppStorage(ExportPreferences.includesPolaroidFrameKey) private var includesPolaroidFrame = false
     @Environment(AppState.self) private var appState
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ShotRecord.takenAt, order: .reverse) private var shots: [ShotRecord]
@@ -97,7 +96,7 @@ struct GalleryView: View {
                         // The lightbox stays standing behind the editor, so closing the
                         // editor drops straight back onto the photo it just decorated.
                         onEdit: { editingShot = shot },
-                        onShare: { sharePayload = SharePayload(url: currentURL(for: shot)) },
+                        onShare: { Task { await share(shot) } },
                         onSave: { Task { await save(shot) } },
                         onDelete: { confirmsDelete = shot },
                         onUseGhost: { useGhost(from: shot) }
@@ -242,16 +241,31 @@ struct GalleryView: View {
         page = min(page, max(0, pages.count - 1))
     }
 
-    /// An undecorated shot has no developed copy, so it shares and saves at full quality.
+    /// An undecorated shot has no developed copy, so its clean source remains
+    /// the full-quality export base.
     private func currentURL(for shot: ShotRecord) -> URL {
         shot.decoratedFileName == nil
             ? ImageStore.shared.shotOriginalURL(shot)
             : ImageStore.shared.shotDisplayURL(shot)
     }
 
-    private func save(_ shot: ShotRecord) async {
-        let url = currentURL(for: shot)
+    private func exportURL(for shot: ShotRecord) async throws -> URL {
+        let sourceURL = currentURL(for: shot)
+        guard includesPolaroidFrame else { return sourceURL }
+        return try await ImageStore.shared.polaroidExportURL(for: sourceURL)
+    }
+
+    private func share(_ shot: ShotRecord) async {
         do {
+            sharePayload = SharePayload(url: try await exportURL(for: shot))
+        } catch {
+            saveMessage = error.localizedDescription
+        }
+    }
+
+    private func save(_ shot: ShotRecord) async {
+        do {
+            let url = try await exportURL(for: shot)
             try await PhotoLibraryService.saveImage(at: url)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             saveMessage = "Saved to Camera Roll."
@@ -362,7 +376,7 @@ private struct PhotoPocket: View {
                     .offset(y: pullY)
                     .opacity(hiddenForLightbox ? 0 : 1)
                     .simultaneousGesture(
-                        pullGesture(cell: geo.size, cardH: polaroidW / polaroidAspect)
+                        pullGesture(cell: geo.size, cardH: polaroidW / PolaroidStyle.cardAspect)
                     )
                     // A tap runs the same rise-then-expand animation, just from seated.
                     .onTapGesture { onOpen(0) }
@@ -467,11 +481,11 @@ private struct PolaroidCard: View {
     var maxPixel: CGFloat = 800
 
     var body: some View {
-        let side = width * 0.055
+        let side = width * PolaroidStyle.sideInsetFraction
         let photoW = width - side * 2
-        let photoH = photoW / Theme.viewportAspect
-        let cardH = width / polaroidAspect
-        let radius = max(3, width * 0.028)
+        let photoH = photoW / PolaroidStyle.photoAspect
+        let cardH = width / PolaroidStyle.cardAspect
+        let radius = max(3, width * PolaroidStyle.outerCornerRadiusFraction)
         ZStack(alignment: .top) {
             RoundedRectangle(cornerRadius: radius, style: .continuous)
                 .fill(Color.white)
@@ -526,7 +540,7 @@ private struct LightboxLayer: View {
     }
 
     private var fullWidth: CGFloat {
-        min(screen.width * 0.86, (screen.height * 0.7) * polaroidAspect)
+        min(screen.width * 0.86, (screen.height * 0.7) * PolaroidStyle.cardAspect)
     }
 
     private var fullCenter: CGPoint {
@@ -536,7 +550,7 @@ private struct LightboxLayer: View {
     // `cell` must already be in the card layer's local space.
     private func morph(cell: CGRect) -> (center: CGPoint, width: CGFloat) {
         let photoW = cell.width * 0.82
-        let photoH = photoW / polaroidAspect
+        let photoH = photoW / PolaroidStyle.cardAspect
         // Seated: photo centered in the pocket. Above: photo bottom edge aligned to the pocket's top opening.
         let seatedC = CGPoint(x: cell.midX, y: cell.midY)
         let aboveC = CGPoint(x: cell.midX, y: cell.minY - photoH / 2)

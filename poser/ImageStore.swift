@@ -234,6 +234,92 @@ actor ImageStore {
         try? fileManager.removeItem(at: documentsURL.appending(path: "shots/decorated/\(fileName)"))
     }
 
+    /// Wraps the exact photo/decorated composite in the same white proportions
+    /// as the card shown in the album. The photo pixels are kept at their source
+    /// resolution; the output grows around them instead of shrinking them into
+    /// a fixed-size template.
+    func polaroidExportURL(for sourceURL: URL) throws -> URL {
+        guard
+            let source = CGImageSourceCreateWithURL(
+                sourceURL as CFURL,
+                [kCGImageSourceShouldCache: false] as CFDictionary
+            ),
+            let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+            let rawWidth = properties[kCGImagePropertyPixelWidth] as? Int,
+            let rawHeight = properties[kCGImagePropertyPixelHeight] as? Int
+        else { throw StoreError.invalidImage }
+
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(rawWidth, rawHeight),
+            kCGImageSourceShouldCacheImmediately: true
+        ]
+        guard let oriented = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            throw StoreError.invalidImage
+        }
+
+        let bounds = CGRect(x: 0, y: 0, width: oriented.width, height: oriented.height)
+        let cropRect = threeByFourPixelRect(
+            inside: bounds,
+            imageWidth: oriented.width,
+            imageHeight: oriented.height
+        )
+        guard let photo = oriented.cropping(to: cropRect) else { throw StoreError.invalidImage }
+
+        let horizontalPhotoFraction = 1 - PolaroidStyle.sideInsetFraction * 2
+        let cardWidth = ceil(CGFloat(photo.width) / horizontalPhotoFraction)
+        let cardHeight = ceil(cardWidth / PolaroidStyle.cardAspect)
+        let side = cardWidth * PolaroidStyle.sideInsetFraction
+        let photoWidth = cardWidth - side * 2
+        let photoHeight = photoWidth / PolaroidStyle.photoAspect
+        let photoRect = CGRect(
+            x: side,
+            y: cardHeight - side - photoHeight,
+            width: photoWidth,
+            height: photoHeight
+        )
+
+        guard let context = CGContext(
+            data: nil,
+            width: Int(cardWidth),
+            height: Int(cardHeight),
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else { throw StoreError.cannotCreateJPEG }
+
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: cardWidth, height: cardHeight))
+        context.saveGState()
+        context.addPath(
+            CGPath(
+                roundedRect: photoRect,
+                cornerWidth: cardWidth * PolaroidStyle.innerCornerRadiusFraction,
+                cornerHeight: cardWidth * PolaroidStyle.innerCornerRadiusFraction,
+                transform: nil
+            )
+        )
+        context.clip()
+        context.interpolationQuality = .high
+        context.draw(photo, in: photoRect)
+        context.restoreGState()
+
+        guard let rendered = context.makeImage(), let jpeg = encodeJPEG(rendered, quality: 0.94) else {
+            throw StoreError.cannotCreateJPEG
+        }
+
+        let exportDirectory = fileManager.temporaryDirectory.appending(
+            path: "poser-exports",
+            directoryHint: .isDirectory
+        )
+        try fileManager.createDirectory(at: exportDirectory, withIntermediateDirectories: true)
+        let outputURL = exportDirectory.appending(path: "poser-polaroid-\(UUID().uuidString.lowercased()).jpg")
+        try jpeg.write(to: outputURL, options: .atomic)
+        return outputURL
+    }
+
     func deleteShot(_ record: ShotRecord) {
         let paths = [
             "shots/\(record.fileName)",
