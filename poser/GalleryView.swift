@@ -322,6 +322,22 @@ private struct AlbumPage: View {
 
     private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
 
+    private struct Slot: Identifiable {
+        let id: String
+        let shot: ShotRecord?
+    }
+
+    // Photos read backwards through the grid — bottom-right, bottom-left,
+    // top-right, top-left — so the newest of the page sits in the bottom-right
+    // pocket, like slotting the latest print into an album from the back. Empty
+    // pockets fill the top-left, keeping every page anchored to the lower right.
+    private var slots: [Slot] {
+        let filled = shots.reversed().map { Slot(id: $0.id, shot: $0) }
+        let emptyCount = max(0, 4 - filled.count)
+        let empties = (0..<emptyCount).map { Slot(id: "empty-\($0)", shot: nil) }
+        return empties + filled
+    }
+
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
@@ -332,21 +348,22 @@ private struct AlbumPage: View {
                 }
                 .shadow(color: Theme.stickerShadow, radius: 24, y: 8)
             LazyVGrid(columns: columns, spacing: 16) {
-                ForEach(Array(shots.enumerated()), id: \.element.id) { index, shot in
-                    PhotoPocket(
-                        shot: shot,
-                        hiddenForLightbox: activeLightboxID == shot.id,
-                        onOpen: { onOpen(shot, $0) },
-                        onDelete: { onDelete(shot) }
-                    )
-                    .transition(.scale(scale: 0.82).combined(with: .offset(y: 24)))
-                    .animation(
-                        .spring(response: 0.40, dampingFraction: 0.72).delay(Double(index) * 0.055),
-                        value: animateIn
-                    )
-                }
-                ForEach(shots.count..<4, id: \.self) { _ in
-                    EmptyPocket()
+                ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
+                    if let shot = slot.shot {
+                        PhotoPocket(
+                            shot: shot,
+                            hiddenForLightbox: activeLightboxID == shot.id,
+                            onOpen: { onOpen(shot, $0) },
+                            onDelete: { onDelete(shot) }
+                        )
+                        .transition(.scale(scale: 0.82).combined(with: .offset(y: 24)))
+                        .animation(
+                            .spring(response: 0.40, dampingFraction: 0.72).delay(Double(index) * 0.055),
+                            value: animateIn
+                        )
+                    } else {
+                        EmptyPocket()
+                    }
                 }
             }
             .padding(18)
@@ -505,13 +522,8 @@ private struct PolaroidCard: View {
 
 private struct EmptyPocket: View {
     var body: some View {
-        ZStack {
-            SleeveBackground()
-            Image(systemName: "photo")
-                .font(.system(size: 24, weight: .light))
-                .foregroundStyle(Theme.Colors.outline)
-        }
-        .aspectRatio(Theme.viewportAspect, contentMode: .fit)
+        SleeveBackground()
+            .aspectRatio(Theme.viewportAspect, contentMode: .fit)
     }
 }
 
