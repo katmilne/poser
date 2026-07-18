@@ -20,11 +20,31 @@
   which is why configuration is tracked by `isConfigured`/`configuration` rather than by
   inspecting `session.inputs`. Overlapping starts must keep sharing one `configuration` task:
   two attempts add the same inputs twice and the session refuses them.
-- **Built-in pose PNGs are read from the app bundle, never copied into Documents.**
+- **Camera zoom is expressed in Apple-style display factors.** Back-camera discovery prefers the
+  Triple/Dual-Wide/Dual virtual devices so AVFoundation can switch physical lenses continuously.
+  On iOS 18+ `displayVideoZoomFactorMultiplier` and `systemRecommendedVideoZoomRange` are the
+  source of truth for labels/range; iOS 17 derives the 0.5x multiplier from the ultra-wide-to-wide
+  switch point. Raw device zoom and all `session.inputs` access stay on `sessionQueue`.
+- **Built-in pose sources are read from the app bundle, never copied into Documents.**
   `persistBundledOverlay` copies only the small prepared JPEG; `sourceFileName` gets a
-  `bundle:`-prefixed resource name that `overlaySourceURL` resolves against `Bundle.main`. The
-  sources are read-only and permanent, so copying all fourteen cost ~42MB of disk and a long
-  first-launch stall for nothing. Only read image headers (`imageDimensions(at:)`) from them.
+  `bundle:`-prefixed resource name that `resolvedOverlaySourceURL` resolves against `Bundle.main`
+  for both display and reframe saves. Never construct a Documents source path directly from a
+  bundle-prefixed filename. The sources are read-only and permanent, so duplicating them adds disk
+  use and a long first-launch stall for nothing. Legacy sources are PNGs; expanded-catalog sources
+  are optimized full-size JPEGs.
+  Only read image headers (`imageDimensions(at:)`) from them.
+- **Bundled pose catalog v10 contains 78 unique poses.** The 64 additions are tagged by people
+  (`solo`, `duo`, `group`), subject (`f`, `m`, `pet`), vibe (`cute`, `cool`, `silly`, `dramatic`),
+  and optional framing (`selfie`, `overhead`, `illusion`). The “Who is posing?” filter presents
+  Solo, Duo, Group, F, M, and Pet together, but keeps people count, F/M, and Pet as separate logical
+  filter groups so combinations such as F + Pet use AND semantics. Poses from the `mixed` intake
+  folder carry both `f` and `m`; `puppy-recline-duo` carries `f` and `pet`. Built-in
+  poses may provide a non-centred `cropCenter`; `party-photobomb` uses y=0.36 so the default 3:4
+  frame includes the foreground subject and the kissing couple behind her, while
+  `peekaboo-duo-selfie` uses y=0.64 to include both of the foreground girl's eyes. Catalog v9
+  visually audited all 78 source/crop pairs and adds tuned vertical centers to 20 poses where the
+  centered crop clipped hands, shoes, or a secondary face; keep each prepared JPEG synchronized
+  with its source crop metadata whenever these centers change.
 - **`LocalImageLoader` is not an actor, deliberately.** Image decoding is CPU-bound; a single
   actor executor serialized every thumbnail behind every other one, so the pose strip filled in
   one image at a time and one full-size pose guide blocked all the small ones. `NSCache` is
@@ -75,3 +95,12 @@
   promise about where the crop lands, so drag/pinch on the camera screen would break the only
   crop signal the user has. Poses are stored on a 3:4 canvas, so they fill the frame exactly.
   Changing the capture area is done by re-cropping the pose via "Reframe pose" in the pose library.
+- **Collapsing the pose strip also collapses the zoom row.** Both controls share
+  `referenceStripCollapsed` and animate out together; the single Show poses chevron restores both.
+- **Ghost opacity uses SwiftUI's native `Slider` (0.15...0.75).** Keep the system control instead
+  of rebuilding it with geometry and drag gestures: it supplies iOS 26 Liquid Glass styling,
+  native accessibility/input behavior, and the correct fallback appearance on earlier iOS versions.
+- **Hardware shutter events reuse the on-screen capture path.** On iOS 18+, CameraView registers
+  `onCameraCaptureEvent`, captures only for the `.ended` phase, and disables the interaction while
+  capture is busy or a modal is presented. This supports Camera Control and the system's other
+  capture buttons only while the camera session is active; iOS 17 keeps the on-screen shutter only.

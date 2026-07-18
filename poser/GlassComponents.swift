@@ -139,47 +139,15 @@ struct PressScaleButtonStyle: ButtonStyle {
     }
 }
 
-struct GhostOpacityBar: View {
+struct GhostOpacitySlider: View {
     @Binding var opacity: Double
-    @State private var crossedDetent = false
 
     var body: some View {
-        GeometryReader { proxy in
-            let progress = (opacity - 0.15) / 0.60
-            ZStack(alignment: .leading) {
-                Capsule().fill(.white.opacity(0.28))
-                Capsule()
-                    .fill(Theme.Colors.ink.opacity(0.28))
-                    .frame(width: max(7, proxy.size.width * progress))
-                Capsule()
-                    .fill(.white.opacity(0.95))
-                    .frame(width: 2)
-                    .offset(x: max(3, proxy.size.width * progress - 1))
-            }
-            .contentShape(.rect)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let next = min(0.75, max(0.15, 0.15 + 0.60 * value.location.x / proxy.size.width))
-                        let isAbove = next >= 0.40
-                        if isAbove != crossedDetent {
-                            UISelectionFeedbackGenerator().selectionChanged()
-                            crossedDetent = isAbove
-                        }
-                        opacity = next
-                    }
-            )
-            .accessibilityElement()
+        Slider(value: $opacity, in: 0.15...0.75)
+            .controlSize(.small)
+            .tint(Theme.Colors.ink)
             .accessibilityLabel("Ghost opacity")
             .accessibilityValue("\(Int(opacity * 100)) percent")
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment: opacity = min(0.75, opacity + 0.05)
-                case .decrement: opacity = max(0.15, opacity - 0.05)
-                @unknown default: break
-                }
-            }
-        }
-        .frame(height: 14)
+            .sensoryFeedback(.selection, trigger: opacity >= 0.40)
     }
 }

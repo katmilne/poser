@@ -4,6 +4,7 @@ import SwiftUI
 
 struct PoseLibraryView: View {
     @Environment(AppState.self) private var appState
+    @Environment(PremiumStore.self) private var premium
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \OverlayRecord.addedAt, order: .reverse) private var overlays: [OverlayRecord]
@@ -14,6 +15,15 @@ struct PoseLibraryView: View {
     @State private var framingRequest: PoseFramingRequest?
     @State private var importError: String?
     @State private var isImporting = false
+    @State private var showsPaywall = false
+
+    private var customPoseCount: Int { overlays.count { !$0.isBuiltIn } }
+
+    /// How many more poses a free user may import; premium is uncapped.
+    /// PhotosPicker treats 0 as "no limit", hence the explicit branch below.
+    private var remainingFreePoses: Int {
+        max(0, PremiumStore.freePoseLimit - customPoseCount)
+    }
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -112,34 +122,63 @@ struct PoseLibraryView: View {
         } message: {
             Text(importError ?? "Please try another photo.")
         }
+        .sheet(isPresented: $showsPaywall) {
+            PaywallView(context: .poseLimit)
+        }
     }
 
+    @ViewBuilder
     private var addPoseTile: some View {
-        PhotosPicker(
-            selection: $pickedItems,
-            maxSelectionCount: 0,
-            selectionBehavior: .ordered,
-            matching: .images
-        ) {
-            GlassSurface(cornerRadius: Theme.Radius.md, tint: Theme.Colors.sky.opacity(0.18), interactive: true) {
-                VStack(spacing: 12) {
-                    Image(systemName: "photo.badge.plus")
-                        .font(.system(size: 32, weight: .semibold))
-                    Text("Add pose")
-                        .font(.system(size: 16, weight: .black, design: .rounded))
-                    Text("From Photos")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Theme.Colors.textDim)
-                }
-                .foregroundStyle(Theme.Colors.ink)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        if premium.isUnlocked || remainingFreePoses > 0 {
+            PhotosPicker(
+                selection: $pickedItems,
+                maxSelectionCount: premium.isUnlocked ? 0 : remainingFreePoses,
+                selectionBehavior: .ordered,
+                matching: .images
+            ) {
+                addPoseTileLabel
             }
+            .buttonStyle(PressScaleButtonStyle())
             .frame(maxWidth: .infinity)
-            .aspectRatio(Theme.viewportAspect, contentMode: .fit)
+            .accessibilityLabel("Add pose from Photos")
+        } else {
+            Button { showsPaywall = true } label: {
+                addPoseTileLabel
+            }
+            .buttonStyle(PressScaleButtonStyle())
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel("Add pose from Photos, premium required")
         }
-        .buttonStyle(PressScaleButtonStyle())
+    }
+
+    private var addPoseTileLabel: some View {
+        GlassSurface(cornerRadius: Theme.Radius.md, tint: Theme.Colors.sky.opacity(0.18), interactive: true) {
+            VStack(spacing: 12) {
+                Image(systemName: addPoseLocked ? "crown.fill" : "photo.badge.plus")
+                    .font(.system(size: 32, weight: .semibold))
+                    .foregroundStyle(addPoseLocked ? Theme.Colors.lemon : Theme.Colors.ink)
+                Text("Add pose")
+                    .font(.system(size: 16, weight: .black, design: .rounded))
+                Text(addPoseSubtitle)
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(Theme.Colors.textDim)
+                    .multilineTextAlignment(.center)
+            }
+            .foregroundStyle(Theme.Colors.ink)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
         .frame(maxWidth: .infinity)
-        .accessibilityLabel("Add pose from Photos")
+        .aspectRatio(Theme.viewportAspect, contentMode: .fit)
+    }
+
+    private var addPoseLocked: Bool {
+        !premium.isUnlocked && remainingFreePoses == 0
+    }
+
+    private var addPoseSubtitle: String {
+        if premium.isUnlocked { return "From Photos" }
+        if addPoseLocked { return "Premium unlocks unlimited" }
+        return "From Photos · \(remainingFreePoses) of \(PremiumStore.freePoseLimit) free left"
     }
 
     private var tagRail: some View {
@@ -153,14 +192,14 @@ struct PoseLibraryView: View {
                     selectedTags.removeAll()
                 }
             }
-            ForEach(PoseTags.groups) { group in
+            ForEach(PoseTags.sections) { section in
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(group.title)
+                    Text(section.title)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.Colors.textDim)
                     ScrollView(.horizontal) {
                         HStack(spacing: 8) {
-                            ForEach(group.options, id: \.id) { option in
+                            ForEach(PoseTags.choices(in: section)) { option in
                                 GlassTextButton(
                                     title: option.label,
                                     compact: true,
@@ -183,7 +222,12 @@ struct PoseLibraryView: View {
 
     @MainActor
     private func importPickedItems() async {
-        let items = pickedItems
+        // The picker is already capped for free users, but the cap is
+        // re-checked here so a stale picker session can't import past it.
+        var items = pickedItems
+        if !premium.isUnlocked {
+            items = Array(items.prefix(remainingFreePoses))
+        }
         pickedItems = []
         isImporting = true
         defer { isImporting = false }
@@ -584,14 +628,14 @@ private struct PoseTaggingFlow: View {
     let overlays: [OverlayRecord]
     let onDone: () -> Void
     @State private var index = 0
-    @State private var selections: [String: String] = [:]
+    @State private var selections: [String: Set<String>] = [:]
 
     private var current: OverlayRecord? {
         overlays.indices.contains(index) ? overlays[index] : nil
     }
 
     private var canAdvance: Bool {
-        PoseTags.groups.allSatisfy { selections[$0.id] != nil }
+        PoseTags.groups.allSatisfy { !$0.isRequired || !(selections[$0.id]?.isEmpty ?? true) }
     }
 
     var body: some View {
@@ -613,19 +657,23 @@ private struct PoseTaggingFlow: View {
                         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
                         .padding(.horizontal, 34)
 
-                    ForEach(PoseTags.groups) { group in
+                    ForEach(PoseTags.sections) { section in
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(group.title)
+                            Text(section.title)
                                 .font(.system(size: 14, weight: .bold))
-                            HStack(spacing: 8) {
-                                ForEach(group.options, id: \.id) { option in
-                                    GlassTextButton(
-                                        title: option.label,
-                                        compact: true,
-                                        selected: selections[group.id] == option.id
-                                    ) { selections[group.id] = option.id }
+                            ScrollView(.horizontal) {
+                                HStack(spacing: 8) {
+                                    ForEach(PoseTags.choices(in: section)) { option in
+                                        let isSelected = selections[option.groupID]?.contains(option.id) ?? false
+                                        GlassTextButton(
+                                            title: option.label,
+                                            compact: true,
+                                            selected: isSelected
+                                        ) { toggle(option) }
+                                    }
                                 }
                             }
+                            .scrollIndicators(.hidden)
                         }
                     }
 
@@ -645,12 +693,30 @@ private struct PoseTaggingFlow: View {
         guard let current else { return }
         selections = [:]
         for group in PoseTags.groups {
-            selections[group.id] = group.options.first { current.tags.contains($0.id) }?.id
+            selections[group.id] = Set(group.options.lazy.map(\.id).filter(current.tags.contains))
+        }
+    }
+
+    private func toggle(_ option: PoseTags.Choice) {
+        guard let group = PoseTags.groups.first(where: { $0.id == option.groupID }) else { return }
+        if group.allowsMultiple {
+            var selected = selections[group.id] ?? []
+            if selected.contains(option.id) {
+                selected.remove(option.id)
+            } else {
+                selected.insert(option.id)
+            }
+            selections[group.id] = selected
+        } else {
+            selections[group.id] = [option.id]
         }
     }
 
     private func advance(_ current: OverlayRecord) {
-        current.tags = PoseTags.groups.compactMap { selections[$0.id] }
+        current.tags = PoseTags.groups.flatMap { group in
+            let selected = selections[group.id] ?? []
+            return group.options.compactMap { selected.contains($0.id) ? $0.id : nil }
+        }
         try? modelContext.save()
         if index == overlays.count - 1 {
             onDone()

@@ -226,14 +226,63 @@ nonisolated struct OverlaySnapshot: Sendable {
 }
 
 enum PoseTags {
-    struct Group: Identifiable {
+    struct Section: Identifiable {
         let id: String
         let title: String
-        let options: [(id: String, label: String)]
+        let groupIDs: [String]
     }
 
-    static let groups = [
-        Group(id: "people", title: "Who is posing?", options: [("solo", "Solo"), ("duo", "Duo"), ("group", "Group")]),
-        Group(id: "vibe", title: "What is the vibe?", options: [("cute", "Cute"), ("cool", "Cool"), ("silly", "Silly")])
+    struct Group: Identifiable {
+        let id: String
+        let options: [(id: String, label: String)]
+        let allowsMultiple: Bool
+        let isRequired: Bool
+    }
+
+    struct Choice: Identifiable {
+        let id: String
+        let label: String
+        let groupID: String
+    }
+
+    static let sections = [
+        Section(id: "posing", title: "Who is posing?", groupIDs: ["people", "gender", "pet"]),
+        Section(id: "vibe", title: "What is the vibe?", groupIDs: ["vibe"]),
+        Section(id: "framing", title: "How is it framed?", groupIDs: ["framing"])
     ]
+
+    static let groups = [
+        Group(
+            id: "people",
+            options: [("solo", "Solo"), ("duo", "Duo"), ("group", "Group")],
+            allowsMultiple: false,
+            isRequired: true
+        ),
+        Group(
+            id: "gender",
+            options: [("f", "F"), ("m", "M")],
+            allowsMultiple: true,
+            isRequired: true
+        ),
+        Group(id: "pet", options: [("pet", "Pet")], allowsMultiple: true, isRequired: false),
+        Group(
+            id: "vibe",
+            options: [("cute", "Cute"), ("cool", "Cool"), ("silly", "Silly"), ("dramatic", "Dramatic")],
+            allowsMultiple: false,
+            isRequired: true
+        ),
+        Group(
+            id: "framing",
+            options: [("selfie", "Selfie"), ("overhead", "Overhead"), ("illusion", "Illusion")],
+            allowsMultiple: true,
+            isRequired: false
+        )
+    ]
+
+    static func choices(in section: Section) -> [Choice] {
+        section.groupIDs.flatMap { groupID -> [Choice] in
+            guard let group = groups.first(where: { $0.id == groupID }) else { return [] }
+            return group.options.map { Choice(id: $0.id, label: $0.label, groupID: group.id) }
+        }
+    }
 }

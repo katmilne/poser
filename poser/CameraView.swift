@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import SwiftData
 import SwiftUI
 import UIKit
@@ -22,6 +23,8 @@ struct CameraView: View {
     @State private var captureFrameInWindow = CGRect.zero
     @State private var errorMessage: String?
     @State private var referenceStripCollapsed = false
+    @State private var showsSettings = false
+    @State private var pinchStartZoom: CGFloat?
 
     private var favoriteOverlays: [OverlayRecord] {
         overlays.filter(\.isFavorite)
@@ -48,6 +51,7 @@ struct CameraView: View {
                 normalizedPhotoCrop: $normalizedCaptureCrop
             )
             .ignoresSafeArea()
+            .simultaneousGesture(cameraZoomGesture)
 
             // The capture frame and the pose guide are one and the same rect:
             // full width, 3:4 tall, centred — which is exactly what ImageStore's
@@ -85,6 +89,12 @@ struct CameraView: View {
                         .padding(.bottom, 24)
                 }
 
+                if !referenceStripCollapsed && camera.supportsZoom && camera.authorizationStatus == .authorized {
+                    CameraZoomControl(camera: camera)
+                        .padding(.bottom, 10)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+
                 referenceStrip
                     .padding(.horizontal, 12)
                     .padding(.bottom, 12)
@@ -110,8 +120,21 @@ struct CameraView: View {
                 .transition(.opacity)
             }
         }
+        .modifier(HardwareCameraCaptureModifier(
+            isEnabled: camera.isReady
+                && !captureBusy
+                && !showsSettings
+                && !appState.showsPoseLibrary
+                && !appState.showsGallery
+                && appState.presentedShot == nil
+        ) {
+            Task { await capture() }
+        })
         .task { await camera.requestAccessAndStart() }
         .onDisappear { camera.stop() }
+        .sheet(isPresented: $showsSettings) {
+            SettingsSheet()
+        }
         .alert("Camera hiccup", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -122,17 +145,31 @@ struct CameraView: View {
         }
     }
 
+    private var cameraZoomGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                guard camera.supportsZoom else { return }
+                if pinchStartZoom == nil { pinchStartZoom = camera.zoomFactor }
+                camera.setZoom((pinchStartZoom ?? camera.zoomFactor) * value.magnification)
+            }
+            .onEnded { _ in pinchStartZoom = nil }
+    }
+
     private var cameraTopBar: some View {
         GlassGroup(spacing: 10) {
             HStack(spacing: 10) {
-                GlassSurface(cornerRadius: Theme.Radius.pill) {
-                    Text("POSER")
-                        .font(.system(size: 15, weight: .black, design: .rounded))
-                        .tracking(1.8)
-                        .foregroundStyle(Theme.Colors.ink)
-                        .padding(.horizontal, 18)
-                        .frame(height: CaptureFrameMetrics.topBarHeight)
+                Button { showsSettings = true } label: {
+                    GlassSurface(cornerRadius: Theme.Radius.pill, interactive: true) {
+                        Text("POSER")
+                            .font(.system(size: 15, weight: .black, design: .rounded))
+                            .tracking(1.8)
+                            .foregroundStyle(Theme.Colors.ink)
+                            .padding(.horizontal, 18)
+                            .frame(height: CaptureFrameMetrics.topBarHeight)
+                    }
                 }
+                .buttonStyle(PressScaleButtonStyle())
+                .accessibilityLabel("POSER settings")
                 Spacer()
                 GlassIconButton(
                     symbol: camera.flash.symbol,
@@ -241,7 +278,7 @@ struct CameraView: View {
                             withAnimation(.poserGlide) { referenceStripCollapsed = true }
                         }
                     }
-                    GhostOpacityBar(opacity: Bindable(appState).ghostOpacity)
+                    GhostOpacitySlider(opacity: Bindable(appState).ghostOpacity)
                         .disabled(appState.selectedGhost == nil)
                         .opacity(appState.selectedGhost == nil ? 0.4 : 1)
                 }
@@ -340,6 +377,129 @@ struct CameraView: View {
         } catch {
             errorMessage = "Capturing the photo failed. \(error.localizedDescription)"
         }
+    }
+}
+
+private struct HardwareCameraCaptureModifier: ViewModifier {
+    let isEnabled: Bool
+    let capture: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onCameraCaptureEvent(isEnabled: isEnabled) { event in
+                guard event.phase == .ended else { return }
+                capture()
+            }
+        } else {
+            content
+        }
+    }
+}
+
+private struct CameraZoomControl: View {
+    let camera: CameraController
+    @State private var showsRange = false
+
+    var body: some View {
+        GlassGroup(spacing: 8) {
+            GlassSurface(cornerRadius: Theme.Radius.pill) {
+                if showsRange {
+                    HStack(spacing: 10) {
+                        Text(Self.label(for: camera.zoomFactor))
+                            .font(.system(size: 13, weight: .black, design: .rounded))
+                            .monospacedDigit()
+                            .frame(width: 42)
+
+                        Slider(value: zoomProgress, in: 0...1)
+                            .tint(Theme.Colors.ink)
+                            .frame(width: 170)
+                            .accessibilityLabel("Zoom")
+                            .accessibilityValue(Self.accessibilityLabel(for: camera.zoomFactor))
+
+                        Button("Done") { showsRange = false }
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(Theme.Colors.ink)
+                    }
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .transition(.opacity)
+                } else {
+                    HStack(spacing: 4) {
+                        ForEach(camera.zoomPresetFactors, id: \.self) { factor in
+                            Button {
+                                camera.setZoom(factor, smoothly: true)
+                            } label: {
+                                Text(Self.label(for: factor))
+                                    .font(.system(size: 13, weight: .black, design: .rounded))
+                                    .monospacedDigit()
+                                    .foregroundStyle(isSelected(factor) ? Theme.Colors.cream : Theme.Colors.ink)
+                                    .frame(width: 42, height: 42)
+                                    .background {
+                                        if isSelected(factor) {
+                                            Circle().fill(Theme.Colors.ink.opacity(0.88))
+                                        }
+                                    }
+                                    .contentShape(.circle)
+                            }
+                            .buttonStyle(PressScaleButtonStyle())
+                            .accessibilityLabel("Zoom \(Self.accessibilityLabel(for: factor))")
+                            .accessibilityAddTraits(isSelected(factor) ? .isSelected : [])
+                        }
+
+                        Button { showsRange = true } label: {
+                            Image(systemName: "dial.medium")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(Theme.Colors.ink)
+                                .frame(width: 42, height: 42)
+                                .contentShape(.circle)
+                        }
+                        .buttonStyle(PressScaleButtonStyle())
+                        .accessibilityLabel("Choose any zoom from \(Self.accessibilityLabel(for: camera.minimumZoomFactor)) to \(Self.accessibilityLabel(for: camera.maximumZoomFactor))")
+                    }
+                    .padding(.horizontal, 5)
+                    .transition(.opacity)
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: showsRange)
+        .onChange(of: camera.facing) { showsRange = false }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var zoomProgress: Binding<Double> {
+        Binding(
+            get: {
+                let minimum = max(Double(camera.minimumZoomFactor), 0.01)
+                let maximum = max(Double(camera.maximumZoomFactor), minimum)
+                guard maximum > minimum else { return 0 }
+                return log(Double(camera.zoomFactor) / minimum) / log(maximum / minimum)
+            },
+            set: { progress in
+                let minimum = max(Double(camera.minimumZoomFactor), 0.01)
+                let maximum = max(Double(camera.maximumZoomFactor), minimum)
+                let factor = minimum * pow(maximum / minimum, progress)
+                camera.setZoom(CGFloat(factor))
+            }
+        )
+    }
+
+    private func isSelected(_ factor: CGFloat) -> Bool {
+        abs(camera.zoomFactor - factor) < 0.05
+    }
+
+    private static func label(for factor: CGFloat) -> String {
+        "\(formatted(factor))×"
+    }
+
+    private static func accessibilityLabel(for factor: CGFloat) -> String {
+        "\(formatted(factor)) times"
+    }
+
+    private static func formatted(_ factor: CGFloat) -> String {
+        let value = Double(factor)
+        let isWhole = abs(value.rounded() - value) < 0.01
+        return value.formatted(.number.precision(.fractionLength(isWhole ? 0 : 1)))
     }
 }
 

@@ -5,6 +5,7 @@ import UIKit
 struct PreviewEditorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(PremiumStore.self) private var premium
     @Query(sort: \CustomStickerRecord.createdAt, order: .reverse) private var customStickers: [CustomStickerRecord]
 
     let shot: ShotRecord
@@ -21,6 +22,7 @@ struct PreviewEditorView: View {
     @State private var noteText = ""
     @State private var showsNoteEntry = false
     @State private var showsStickerMaker = false
+    @State private var showsPaywall = false
     @State private var stickerPendingRemoval: CustomStickerRecord?
     @State private var sharePayload: SharePayload?
     @State private var alertMessage: String?
@@ -134,6 +136,9 @@ struct PreviewEditorView: View {
         .sheet(isPresented: $showsNoteEntry) { noteEntrySheet }
         .fullScreenCover(isPresented: $showsStickerMaker) {
             StickerMakerView { custom in addCustomSticker(custom) }
+        }
+        .sheet(isPresented: $showsPaywall) {
+            PaywallView(context: .stickerLimit)
         }
         .shareSheet(payload: $sharePayload)
         .confirmationDialog(
@@ -267,19 +272,32 @@ struct PreviewEditorView: View {
         .buttonStyle(PressScaleButtonStyle())
         .accessibilityLabel("Add a note sticker")
 
-        Button { showsStickerMaker = true } label: {
+        Button {
+            if premium.canAddCustomSticker(currentCount: pickerStickers.count) {
+                showsStickerMaker = true
+            } else {
+                showsPaywall = true
+            }
+        } label: {
             VStack(spacing: 2) {
-                Image(systemName: "person.crop.rectangle.badge.plus")
+                Image(systemName: stickerMakerLocked ? "crown.fill" : "person.crop.rectangle.badge.plus")
                     .font(.system(size: 22, weight: .semibold))
                 Text("MAKE")
                     .font(.system(size: 8, weight: .black))
             }
             .foregroundStyle(Theme.Colors.ink)
             .frame(width: 54, height: 54)
-            .background(Theme.Colors.cyan, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .background(
+                stickerMakerLocked ? Theme.Colors.lemon : Theme.Colors.cyan,
+                in: RoundedRectangle(cornerRadius: 13, style: .continuous)
+            )
         }
         .buttonStyle(PressScaleButtonStyle())
-        .accessibilityLabel("Make a sticker from a photo")
+        .accessibilityLabel(
+            stickerMakerLocked
+                ? "Make a sticker from a photo, premium required"
+                : "Make a sticker from a photo"
+        )
 
         ForEach(pickerStickers) { custom in
             Button { addCustomSticker(custom) } label: {
@@ -301,6 +319,12 @@ struct PreviewEditorView: View {
     /// this shot. Only the picker narrows to what's still on offer.
     private var pickerStickers: [CustomStickerRecord] {
         customStickers.filter { $0.hiddenAt == nil }
+    }
+
+    /// Free tier counts only stickers still in the picker, so retiring one
+    /// frees a slot; the retired art stays on any shots already wearing it.
+    private var stickerMakerLocked: Bool {
+        !premium.canAddCustomSticker(currentCount: pickerStickers.count)
     }
 
     private func packItems(_ items: [(id: String, title: String)]) -> some View {
@@ -849,7 +873,7 @@ private struct StickerGlyph: View {
         Image(systemName: name)
             .resizable()
             .scaledToFit()
-            .foregroundStyle(.white)
+            .foregroundStyle(color)
             .shadow(color: Theme.Colors.ink.opacity(0.35), radius: 2, y: 1)
             .padding(8)
     }

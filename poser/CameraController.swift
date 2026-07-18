@@ -58,6 +58,10 @@ final class CameraController {
     private(set) var isSwitching = false
     private(set) var facing: CameraFacing = .back
     private(set) var configurationErrorMessage: String?
+    private(set) var zoomFactor: CGFloat = 1
+    private(set) var minimumZoomFactor: CGFloat = 1
+    private(set) var maximumZoomFactor: CGFloat = 1
+    private(set) var zoomPresetFactors: [CGFloat] = [1]
     var flash: FlashSetting = .off
 
     /// Tracks configuration here rather than reading `session.inputs`: the
@@ -65,8 +69,11 @@ final class CameraController {
     /// main actor would race with the configuration it is meant to guard.
     @ObservationIgnored private var isConfigured = false
     @ObservationIgnored private var configuration: Task<Void, Error>?
+    @ObservationIgnored private var activeDeviceID: String?
+    @ObservationIgnored private var displayZoomMultiplier: CGFloat = 1
 
     var isReady: Bool { isRunning && hasProducedFrame && !isSwitching }
+    var supportsZoom: Bool { maximumZoomFactor - minimumZoomFactor > 0.01 }
 
     func requestAccessAndStart() async {
 #if targetEnvironment(simulator)
@@ -141,7 +148,7 @@ final class CameraController {
         // Swapping the input is the same slow AVFoundation work as the initial
         // configuration, so it belongs on the capture queue too — on the main
         // actor it stalls the whole screen mid-flip.
-        try await onSessionQueue { [session, videoOutput] in
+        let zoom = try await onSessionQueue { [session, videoOutput] in
             guard let device = Self.cameraDevice(for: next) else { throw CameraError.unavailable }
             let input = try AVCaptureDeviceInput(device: device)
 
@@ -156,8 +163,47 @@ final class CameraController {
             session.addInput(input)
             Self.configureConnections(on: videoOutput, facing: next)
             session.commitConfiguration()
+            return Self.prepareDefaultZoom(for: device)
         }
         facing = next
+        apply(zoom)
+#endif
+    }
+
+    /// Sets the user-facing zoom value (0.5x, 1x, 2x, ...). AVFoundation's
+    /// raw zoom starts at 1 for the widest constituent camera, so a multi-camera
+    /// device needs its display multiplier applied before values match Camera.
+    /// Session/device access remains confined to `sessionQueue`.
+    func setZoom(_ requestedFactor: CGFloat, smoothly: Bool = false) {
+#if !targetEnvironment(simulator)
+        guard isConfigured, let activeDeviceID else { return }
+        let factor = min(maximumZoomFactor, max(minimumZoomFactor, requestedFactor))
+        zoomFactor = factor
+
+        let rawFactor = factor / displayZoomMultiplier
+        let session = session
+        sessionQueue.async {
+            guard let device = session.inputs
+                .compactMap({ $0 as? AVCaptureDeviceInput })
+                .map(\.device)
+                .first(where: { $0.uniqueID == activeDeviceID })
+            else { return }
+
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                let clamped = min(device.maxAvailableVideoZoomFactor, max(device.minAvailableVideoZoomFactor, rawFactor))
+                if smoothly {
+                    device.ramp(toVideoZoomFactor: clamped, withRate: 8)
+                } else {
+                    device.videoZoomFactor = clamped
+                }
+            } catch {
+                // A transient configuration lock failure should not tear down
+                // an otherwise healthy camera session. The next gesture or
+                // preset selection retries the update.
+            }
+        }
 #endif
     }
 
@@ -200,7 +246,7 @@ final class CameraController {
         frameDelegate = delegate
 
         let facing = facing
-        try await onSessionQueue { [session, photoOutput, videoOutput, sessionQueue] in
+        let zoom = try await onSessionQueue { [session, photoOutput, videoOutput, sessionQueue] in
             guard let device = Self.cameraDevice(for: facing) else { throw CameraError.unavailable }
             let input = try AVCaptureDeviceInput(device: device)
 
@@ -218,7 +264,9 @@ final class CameraController {
             videoOutput.setSampleBufferDelegate(delegate, queue: sessionQueue)
             Self.configureConnections(on: videoOutput, facing: facing)
             session.commitConfiguration()
+            return Self.prepareDefaultZoom(for: device)
         }
+        apply(zoom)
     }
 
     /// Hands `work` to the capture queue and resumes the caller with its result,
@@ -253,13 +301,121 @@ final class CameraController {
 
     private nonisolated static func cameraDevice(for facing: CameraFacing) -> AVCaptureDevice? {
         let position: AVCaptureDevice.Position = facing == .front ? .front : .back
+        let preferredTypes: [AVCaptureDevice.DeviceType] = if facing == .back {
+            [
+                .builtInTripleCamera,
+                .builtInDualWideCamera,
+                .builtInDualCamera,
+                .builtInWideAngleCamera
+            ]
+        } else {
+            [.builtInTrueDepthCamera, .builtInWideAngleCamera]
+        }
         let discovery = AVCaptureDevice.DiscoverySession(
-            deviceTypes: [.builtInWideAngleCamera],
+            deviceTypes: preferredTypes,
             mediaType: .video,
             position: position
         )
-        return discovery.devices.first
+        return preferredTypes.lazy.compactMap { type in
+            discovery.devices.first(where: { $0.deviceType == type })
+        }.first
     }
+
+    private func apply(_ capabilities: CameraZoomCapabilities) {
+        activeDeviceID = capabilities.deviceID
+        displayZoomMultiplier = capabilities.displayMultiplier
+        minimumZoomFactor = capabilities.minimum
+        maximumZoomFactor = capabilities.maximum
+        zoomPresetFactors = capabilities.presets
+        zoomFactor = capabilities.initial
+    }
+
+    private nonisolated static func prepareDefaultZoom(
+        for device: AVCaptureDevice
+    ) -> CameraZoomCapabilities {
+        let multiplier = displayMultiplier(for: device)
+        var rawMinimum = device.minAvailableVideoZoomFactor
+        var rawMaximum = device.maxAvailableVideoZoomFactor
+        let switchPoints = device.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
+        let nativeCropPoints = device.activeFormat.secondaryNativeResolutionZoomFactors
+
+        if #available(iOS 18, *) {
+            if let recommended = device.activeFormat.systemRecommendedVideoZoomRange {
+                rawMinimum = max(rawMinimum, recommended.lowerBound)
+                rawMaximum = min(rawMaximum, recommended.upperBound)
+            }
+        } else {
+            // iOS 17 has no system-recommended range API. Five times the
+            // furthest optical/native-resolution point follows Camera's useful
+            // digital-zoom families without exposing AVFoundation's enormous
+            // technical sensor maximum.
+            let furthestNative = ([CGFloat(1)] + switchPoints + nativeCropPoints).max() ?? 1
+            rawMaximum = min(rawMaximum, furthestNative * 5)
+        }
+
+        if rawMaximum < rawMinimum {
+            rawMinimum = device.minAvailableVideoZoomFactor
+            rawMaximum = device.maxAvailableVideoZoomFactor
+        }
+
+        let rawDefault = min(rawMaximum, max(rawMinimum, 1 / multiplier))
+        var rawInitial = min(rawMaximum, max(rawMinimum, device.videoZoomFactor))
+        do {
+            try device.lockForConfiguration()
+            device.videoZoomFactor = rawDefault
+            device.unlockForConfiguration()
+            rawInitial = rawDefault
+        } catch {
+            // Zoom is an enhancement, not a reason to fail an otherwise valid
+            // camera configuration. `setZoom` will retry the device lock on the
+            // next user interaction.
+        }
+
+        let minimum = rawMinimum * multiplier
+        let maximum = rawMaximum * multiplier
+        let switchPresets = switchPoints.map { $0 * multiplier }
+        let nativeCropPresets = nativeCropPoints.map { $0 * multiplier }
+        let candidates: [CGFloat] = [minimum, 1] + switchPresets + nativeCropPresets
+        var presets: [CGFloat] = []
+        for candidate in candidates.sorted() where candidate >= minimum - 0.01 && candidate <= maximum + 0.01 {
+            let rounded = (candidate * 10).rounded() / 10
+            if !presets.contains(where: { abs($0 - rounded) < 0.05 }) {
+                presets.append(rounded)
+            }
+        }
+
+        return CameraZoomCapabilities(
+            deviceID: device.uniqueID,
+            displayMultiplier: multiplier,
+            minimum: minimum,
+            maximum: maximum,
+            initial: rawInitial * multiplier,
+            presets: presets.isEmpty ? [rawInitial * multiplier] : presets
+        )
+    }
+
+    private nonisolated static func displayMultiplier(for device: AVCaptureDevice) -> CGFloat {
+        if #available(iOS 18, *) {
+            return device.displayVideoZoomFactorMultiplier
+        }
+
+        let hasUltraWide = device.constituentDevices.contains {
+            $0.deviceType == .builtInUltraWideCamera
+        }
+        guard hasUltraWide,
+              let wideSwitchFactor = device.virtualDeviceSwitchOverVideoZoomFactors.first
+        else { return 1 }
+        return 1 / CGFloat(truncating: wideSwitchFactor)
+    }
+}
+
+private struct CameraZoomCapabilities: Sendable {
+    let deviceID: String
+    let displayMultiplier: CGFloat
+    let minimum: CGFloat
+    let maximum: CGFloat
+    let initial: CGFloat
+    let presets: [CGFloat]
 }
 
 private extension FlashSetting {

@@ -95,10 +95,10 @@ actor ImageStore {
         try prepareDirectories()
 
         // Built-in poses are prepared at build time, so this only copies the
-        // small display JPEG. The full-resolution PNG stays in the bundle and is
+        // small display JPEG. The full-resolution source stays in the bundle and is
         // referenced there rather than copied: it is read-only and permanent, so
-        // duplicating all fourteen into Documents bought nothing and cost ~42MB
-        // of disk and a long stall on first launch, before any pose could show.
+        // duplicating the catalog into Documents buys nothing, wastes disk, and
+        // adds a long stall on first launch before any pose can show.
         let sourceDimensions = try imageDimensions(at: sourceURL)
         let preparedDimensions = try imageDimensions(at: preparedURL)
         let crop = centeredThreeByFourCrop(
@@ -185,9 +185,10 @@ actor ImageStore {
         crop: NormalizedCrop
     ) async throws -> (width: Int, height: Int) {
         let outputURL = documentsURL.appending(path: "overlays/\(outputFileName)")
-        let sourceURL = sourceFileName.map {
-            documentsURL.appending(path: "overlays/sources/\($0)")
-        } ?? outputURL
+        let sourceURL = resolvedOverlaySourceURL(
+            sourceFileName: sourceFileName,
+            fallbackURL: outputURL
+        )
         let data = try Data(contentsOf: sourceURL, options: .mappedIfSafe)
         let prepared = try renderCroppedJPEG(data, crop: crop, maxPixel: 2048, quality: 0.94)
         try prepared.data.write(to: outputURL, options: .atomic)
@@ -282,18 +283,28 @@ actor ImageStore {
     }
 
     nonisolated func overlaySourceURL(_ record: OverlayRecord) -> URL {
-        guard let sourceFileName = record.sourceFileName else { return overlayURL(record) }
+        resolvedOverlaySourceURL(
+            sourceFileName: record.sourceFileName,
+            fallbackURL: overlayURL(record)
+        )
+    }
+
+    private nonisolated func resolvedOverlaySourceURL(
+        sourceFileName: String?,
+        fallbackURL: URL
+    ) -> URL {
+        guard let sourceFileName else { return fallbackURL }
         if let resource = Self.bundledResource(from: sourceFileName) {
             // Falling back to the display JPEG keeps reframing working even if a
             // resource is ever renamed — a coarser source, not a broken screen.
-            return Bundle.main.url(forResource: resource, withExtension: nil) ?? overlayURL(record)
+            return Bundle.main.url(forResource: resource, withExtension: nil) ?? fallbackURL
         }
         return documentURL.appending(path: "overlays/sources/\(sourceFileName)")
     }
 
     /// Marks a `sourceFileName` as living in the app bundle rather than in
     /// Documents, so `overlaySourceURL` knows where to look. Built-in poses keep
-    /// their full-resolution PNG in the bundle instead of copying it out.
+    /// their full-resolution source in the bundle instead of copying it out.
     private static let bundledSourceScheme = "bundle:"
 
     private nonisolated static func bundledSourceName(_ resource: String) -> String {

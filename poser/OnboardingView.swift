@@ -4,6 +4,7 @@ import SwiftUI
 struct OnboardingView: View {
     let onComplete: () -> Void
     @State private var page = 0
+    @State private var showsPaywall = false
 
     private let slides = [
         OnboardingSlide(
@@ -19,6 +20,19 @@ struct OnboardingView: View {
     ]
 
     var body: some View {
+        ZStack {
+            if showsPaywall {
+                PaywallView(context: .onboarding, onClose: onComplete)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            } else {
+                onboardingPages
+                    .transition(.opacity)
+            }
+        }
+        .animation(.poserGlide, value: showsPaywall)
+    }
+
+    private var onboardingPages: some View {
         ZStack {
             SkyBackground()
             VStack(spacing: 0) {
@@ -74,7 +88,7 @@ struct OnboardingView: View {
                                 _ = await AVCaptureDevice.requestAccess(for: .video)
                             }
 #endif
-                            onComplete()
+                            showsPaywall = true
                         }
                     }
                 }
