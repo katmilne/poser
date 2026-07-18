@@ -24,13 +24,19 @@ struct ContentView: View {
             }
         }
         .accessibilityHidden(
-            appState.showsGallery || appState.showsPoseLibrary || appState.presentedShot != nil
+            appState.showsGallery
+                || appState.showsPoseLibrary
+                || appState.showsSettings
+                || appState.presentedShot != nil
         )
         .fullScreenCover(isPresented: $appState.showsGallery) {
             GalleryView()
         }
         .sheet(isPresented: $appState.showsPoseLibrary) {
             PoseLibraryView()
+        }
+        .sheet(isPresented: $appState.showsSettings) {
+            SettingsSheet()
         }
         .fullScreenCover(item: $appState.presentedShot) { shot in
             PreviewEditorView(shot: shot)
@@ -48,7 +54,12 @@ struct ContentView: View {
             sessionCount += 1
             guard onboarded, sessionCount == 2, !premiumNudgeShown else { return }
             try? await Task.sleep(for: .seconds(1.5))
-            guard !appState.showsGallery, !appState.showsPoseLibrary, appState.presentedShot == nil else { return }
+            guard
+                !appState.showsGallery,
+                !appState.showsPoseLibrary,
+                !appState.showsSettings,
+                appState.presentedShot == nil
+            else { return }
             premiumNudgeShown = true
             showsPremiumNudge = true
         }

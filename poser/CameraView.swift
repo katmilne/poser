@@ -23,7 +23,6 @@ struct CameraView: View {
     @State private var captureFrameInWindow = CGRect.zero
     @State private var errorMessage: String?
     @State private var referenceStripCollapsed = false
-    @State private var showsSettings = false
     @State private var pinchStartZoom: CGFloat?
 
     private var favoriteOverlays: [OverlayRecord] {
@@ -123,7 +122,7 @@ struct CameraView: View {
         .modifier(HardwareCameraCaptureModifier(
             isEnabled: camera.isReady
                 && !captureBusy
-                && !showsSettings
+                && !appState.showsSettings
                 && !appState.showsPoseLibrary
                 && !appState.showsGallery
                 && appState.presentedShot == nil
@@ -132,9 +131,6 @@ struct CameraView: View {
         })
         .task { await camera.requestAccessAndStart() }
         .onDisappear { camera.stop() }
-        .sheet(isPresented: $showsSettings) {
-            SettingsSheet()
-        }
         .alert("Camera hiccup", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -158,8 +154,8 @@ struct CameraView: View {
     private var cameraTopBar: some View {
         GlassGroup(spacing: 10) {
             HStack(spacing: 10) {
-                Button { showsSettings = true } label: {
-                    GlassSurface(cornerRadius: Theme.Radius.pill, interactive: true) {
+                Button { appState.showsSettings = true } label: {
+                    GlassSurface(cornerRadius: Theme.Radius.pill, interactive: false) {
                         Text("POSER")
                             .font(.system(size: 15, weight: .black, design: .rounded))
                             .tracking(1.8)
@@ -167,6 +163,7 @@ struct CameraView: View {
                             .padding(.horizontal, 18)
                             .frame(height: CaptureFrameMetrics.topBarHeight)
                     }
+                    .contentShape(.capsule)
                 }
                 .buttonStyle(PressScaleButtonStyle())
                 .accessibilityLabel("POSER settings")
@@ -207,6 +204,14 @@ struct CameraView: View {
     private var cameraBottomBar: some View {
         GlassGroup(spacing: 32) {
             HStack {
+                GlassIconButton(symbol: "photo.on.rectangle", accessibilityLabel: "Open album") {
+                    appState.showsGallery = true
+                }
+                Spacer()
+                ShutterButton(enabled: camera.isReady && !captureBusy) {
+                    Task { await capture() }
+                }
+                Spacer()
                 GlassIconButton(
                     symbol: "arrow.triangle.2.circlepath",
                     accessibilityLabel: "Flip camera",
@@ -216,14 +221,6 @@ struct CameraView: View {
                         do { try await camera.switchCamera() }
                         catch { errorMessage = "Switching cameras failed. \(error.localizedDescription)" }
                     }
-                }
-                Spacer()
-                ShutterButton(enabled: camera.isReady && !captureBusy) {
-                    Task { await capture() }
-                }
-                Spacer()
-                GlassIconButton(symbol: "photo.on.rectangle", accessibilityLabel: "Open album") {
-                    appState.showsGallery = true
                 }
             }
         }

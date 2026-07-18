@@ -60,9 +60,23 @@
   from a purchased product identifier. Onboarding must explicitly load offering `onboarding` and
   its custom packages `annual_7_day_trial` / `annual_intro_30_day`; contextual and Settings
   paywalls use `offerings.current`, falling back to offering `default`. Introductory-offer copy and
-  CTAs are shown only after RevenueCat reports the selected product eligible; unknown or ineligible
-  users get ordinary yearly copy. The app must be configured with Poser's public Apple `appl_…`
-  SDK key, never the key from another RevenueCat app.
+  CTAs are shown only after RevenueCat reports the selected product eligible. Onboarding hides each
+  ineligible introductory offer; when neither is eligible (or eligibility is still unknown), it
+  shows one ordinary yearly option instead of duplicate offer cards. The app must be configured
+  with Poser's public Apple `appl_…` SDK key, never the key from another RevenueCat app.
+  - Paywalls keep Poser's sky-and-glass identity. General paywalls use compact benefit chips so all
+    three plans remain visible. Keep the complete purchase section together in the fixed footer;
+    use the general paywall's compact content/footer spacing to leave a clear gap after Lifetime
+    without detaching the CTA from its billing, restore, and legal details. Onboarding uses the
+    detailed benefit rows plus a selected-offer timeline. Plan cards are semantic `Button`s around
+    non-interactive decorative glass — putting an interactive glass effect inside them can swallow
+    taps on iOS 26. Savings copy must be derived from the customer's loaded regional App Store
+    prices, never a hard-coded percentage.
+
+- **The POSER settings chip is one full semantic button.** Its decorative glass stays
+  non-interactive and the capsule defines the content shape, so the full visible pill—not only the
+  text—accepts taps. Settings presentation is owned by `AppState`; keep the second-session Premium
+  nudge gated on `showsSettings` so those two sheets cannot race each other.
 
 - **The camera viewfinder is edge-to-edge.** `CameraView` fills the entire screen with the
   preview (safe areas included) and floats the controls on top. Do not box it into a

@@ -134,6 +134,10 @@ final class PremiumStore {
     func loadOfferings() async {
         guard storeIsLive, !isLoadingOfferings else { return }
         isLoadingOfferings = true
+        // Never carry a previous eligibility result into a newly presented
+        // paywall. Offer terms stay hidden until this customer's fresh check
+        // completes; `.unknown` and `.ineligible` both use regular pricing.
+        introEligibility = [:]
         defer { isLoadingOfferings = false }
 
         do {
@@ -214,10 +218,18 @@ final class PremiumStore {
         [monthlyPlan, generalYearlyPlan, lifetimePlan]
     }
 
-    /// Onboarding paywall: only the two custom yearly packages from the
-    /// explicitly named `onboarding` offering.
+    /// Onboarding paywall: only introductory offers that RevenueCat has
+    /// confirmed this App Store customer can redeem. If neither offer is
+    /// eligible (including while eligibility is unknown), keep one ordinary
+    /// yearly option available without introductory pricing or trial copy.
     var onboardingPlans: [PaywallPlan] {
-        [onboardingTrialPlan, onboardingIntroPlan]
+        let trial = onboardingTrialPlan
+        let discountedMonth = onboardingIntroPlan
+        let eligibleOffers = [trial, discountedMonth].filter {
+            isEligibleForIntroOffer($0.package)
+        }
+
+        return eligibleOffers.isEmpty ? [trial] : eligibleOffers
     }
 
     private var onboardingOffering: Offering? {
@@ -251,10 +263,29 @@ final class PremiumStore {
             title: "YEARLY",
             price: price,
             caption: eligible ? "7 days free, then \(price)/year" : "per year",
-            badge: "BEST VALUE",
+            badge: annualSavingsBadge,
             ctaTitle: eligible ? "START 7-DAY FREE TRIAL" : "CHOOSE YEARLY",
             package: package
         )
+    }
+
+    /// Uses the customer's real App Store prices so the savings claim remains
+    /// truthful across currencies and regional price tiers. Until offerings
+    /// load, the existing neutral badge remains in place.
+    private var annualSavingsBadge: String {
+        guard
+            let monthly = validatedPackage(generalOffering?.monthly, productID: Self.monthlyProductID),
+            let yearly = validatedPackage(generalOffering?.annual, productID: Self.yearlyProductID)
+        else { return "BEST VALUE" }
+
+        let monthlyForYear = monthly.storeProduct.price * 12
+        guard monthlyForYear > 0 else { return "BEST VALUE" }
+
+        let ratio = NSDecimalNumber(decimal: yearly.storeProduct.price)
+            .dividing(by: NSDecimalNumber(decimal: monthlyForYear))
+            .doubleValue
+        let savings = Int(((1 - ratio) * 100).rounded())
+        return savings > 0 ? "SAVE \(savings)%" : "BEST VALUE"
     }
 
     private var onboardingTrialPlan: PaywallPlan {

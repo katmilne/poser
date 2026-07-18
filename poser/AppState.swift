@@ -10,6 +10,7 @@ final class AppState {
     var presentedShot: ShotRecord?
     var showsGallery = false
     var showsPoseLibrary = false
+    var showsSettings = false
 
     func selectGhost(_ overlay: OverlayRecord) {
         selectedGhost = overlay

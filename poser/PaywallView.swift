@@ -33,7 +33,7 @@ struct PaywallView: View {
                 header
 
                 ScrollView {
-                    VStack(spacing: 18) {
+                    VStack(spacing: context == .onboarding ? 14 : 12) {
                         GlassSurface(cornerRadius: 44) {
                             Image(systemName: "crown.fill")
                                 .font(.system(size: 40, weight: .semibold))
@@ -53,9 +53,15 @@ struct PaywallView: View {
                             .lineSpacing(3)
                             .padding(.horizontal, 30)
 
+                        PaywallBenefitList(compact: context != .onboarding)
+
                         if premium.isUnlocked {
                             unlockedCard
                         } else {
+                            if context == .onboarding, let selectedPlan {
+                                PaywallOfferTimeline(plan: selectedPlan)
+                            }
+
                             VStack(spacing: 10) {
                                 ForEach(plans) { plan in
                                     PaywallPlanCard(
@@ -69,7 +75,7 @@ struct PaywallView: View {
                             .padding(.horizontal, 22)
                         }
                     }
-                    .padding(.bottom, 12)
+                    .padding(.bottom, context == .onboarding ? 24 : 16)
                 }
                 .scrollIndicators(.hidden)
 
@@ -119,28 +125,50 @@ struct PaywallView: View {
     }
 
     private var footer: some View {
-        VStack(spacing: 12) {
-            GlassTextButton(
-                title: ctaTitle,
-                disabled: premium.isPurchasing || selectedPlan?.package == nil
-            ) {
-                guard let plan = selectedPlan else { return }
-                Task {
-                    await premium.purchase(plan)
-                    if premium.isUnlocked { close() }
-                }
-            }
+        VStack(spacing: context == .onboarding ? 12 : 8) {
+            purchaseButton
+            purchaseDetails
+        }
+        .padding(.bottom, context == .onboarding ? 18 : 10)
+    }
 
+    private var purchaseButton: some View {
+        PaywallPurchaseButton(
+            title: ctaTitle,
+            disabled: premium.isPurchasing || selectedPlan?.package == nil
+        ) {
+            guard let plan = selectedPlan else { return }
+            Task {
+                await premium.purchase(plan)
+                if premium.isUnlocked { close() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var purchaseDetails: some View {
+        VStack(spacing: context == .onboarding ? 12 : 8) {
             if premium.isLoadingOfferings {
                 ProgressView()
                     .tint(Theme.Colors.ink)
                     .accessibilityLabel("Loading App Store pricing")
             } else if selectedPlan?.package == nil {
-                Text("APP STORE PRICING UNAVAILABLE RIGHT NOW")
-                    .font(.system(size: 10, weight: .black, design: .monospaced))
-                    .tracking(1)
-                    .foregroundStyle(Theme.Colors.textDim)
+                Button {
+                    Task { await premium.loadOfferings() }
+                } label: {
+                    Text("APP STORE PRICING UNAVAILABLE · RETRY")
+                        .font(.system(size: 10, weight: .black, design: .monospaced))
+                        .tracking(1)
+                        .foregroundStyle(Theme.Colors.textDim)
+                }
+                .accessibilityHint("Attempts to reload plans and prices")
             }
+
+            Text(selectedPlanDisclosure)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.Colors.textDim)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
 
             HStack(spacing: 18) {
                 Button("Restore Purchases") {
@@ -163,7 +191,6 @@ struct PaywallView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 34)
         }
-        .padding(.bottom, 18)
     }
 
     private var ctaTitle: String {
@@ -185,6 +212,229 @@ struct PaywallView: View {
             dismiss()
         }
     }
+
+    private var selectedPlanDisclosure: String {
+        guard let plan = selectedPlan else { return "Select a plan to see its billing details." }
+        switch plan.kind {
+        case .monthly:
+            return "\(plan.price) per month. Renews monthly until cancelled."
+        case .yearly, .yearlyIntro:
+            if plan.caption == "per year" {
+                return "\(plan.price) per year. Renews yearly until cancelled."
+            }
+            if plan.kind == .yearlyIntro {
+                return "\(plan.price) \(plan.caption). Renews yearly until cancelled."
+            }
+            return "\(plan.caption). Renews yearly until cancelled."
+        case .lifetime:
+            return "\(plan.price) one-time purchase. No subscription."
+        }
+    }
+}
+
+private struct PaywallBenefit: Identifiable {
+    let id: String
+    let symbol: String
+    let title: String
+    let detail: String
+    let tint: Color
+}
+
+private struct PaywallBenefitList: View {
+    let compact: Bool
+
+    private static let benefits = [
+        PaywallBenefit(
+            id: "poses",
+            symbol: "photo.stack.fill",
+            title: "UNLIMITED PHOTO POSES",
+            detail: "Save every reference pose you want from Photos.",
+            tint: Theme.Colors.cyan.opacity(0.72)
+        ),
+        PaywallBenefit(
+            id: "stickers",
+            symbol: "wand.and.stars",
+            title: "UNLIMITED CUTOUT STICKERS",
+            detail: "Turn more photos into custom stickers for your shots.",
+            tint: Theme.Colors.lemon.opacity(0.82)
+        )
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("WHAT PREMIUM UNLOCKS")
+                .font(.system(size: 11, weight: .black, design: .monospaced))
+                .tracking(1.2)
+                .padding(.leading, 2)
+
+            if compact {
+                HStack(spacing: 8) {
+                    ForEach(Self.benefits) { benefit in
+                        PaywallBenefitChip(benefit: benefit)
+                    }
+                }
+            } else {
+                ForEach(Self.benefits) { benefit in
+                    PaywallBenefitRow(benefit: benefit)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 22)
+    }
+}
+
+private struct PaywallBenefitRow: View {
+    let benefit: PaywallBenefit
+
+    var body: some View {
+        HStack(spacing: 12) {
+            GlassSurface(cornerRadius: 18, tint: benefit.tint) {
+                Image(systemName: benefit.symbol)
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.Colors.denim)
+                    .frame(width: 36, height: 36)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(benefit.title)
+                    .font(.system(size: 12, weight: .black, design: .rounded))
+                    .tracking(0.7)
+                Text(benefit.detail)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Theme.Colors.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct PaywallBenefitChip: View {
+    let benefit: PaywallBenefit
+
+    var body: some View {
+        GlassSurface(cornerRadius: Theme.Radius.md, tint: benefit.tint) {
+            HStack(spacing: 7) {
+                Image(systemName: benefit.symbol)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Theme.Colors.denim)
+                    .accessibilityHidden(true)
+                Text(benefit.title)
+                    .font(.system(size: 9.5, weight: .black, design: .rounded))
+                    .tracking(0.45)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity)
+            .frame(height: 48)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(benefit.title). \(benefit.detail)")
+    }
+}
+
+private struct PaywallOfferTimeline: View {
+    let plan: PaywallPlan
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("YOUR PREMIUM START")
+                .font(.system(size: 11, weight: .black, design: .monospaced))
+                .tracking(1.2)
+                .padding(.leading, 2)
+
+            timelineRow(
+                symbol: "lock.open.fill",
+                title: "LIMITS LIFT RIGHT AWAY",
+                detail: "Your pose and sticker limits disappear immediately."
+            )
+            timelineRow(
+                symbol: "creditcard.fill",
+                title: billingTitle,
+                detail: billingDetail
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 22)
+    }
+
+    private func timelineRow(symbol: String, title: String, detail: String) -> some View {
+        HStack(spacing: 12) {
+            GlassSurface(cornerRadius: 16, tint: Theme.Colors.grape.opacity(0.58)) {
+                Image(systemName: symbol)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(Theme.Colors.denim)
+                    .frame(width: 32, height: 32)
+            }
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 11, weight: .black, design: .rounded))
+                    .tracking(0.7)
+                Text(detail)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Theme.Colors.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var billingTitle: String {
+        if plan.kind == .yearly, plan.caption.hasPrefix("7 days free") {
+            return "BILLING STARTS AFTER 7 DAYS"
+        }
+        if plan.kind == .yearlyIntro, plan.caption.hasPrefix("for the first month") {
+            return "INTRO PRICE FOR THE FIRST MONTH"
+        }
+        return "BILLED YEARLY"
+    }
+
+    private var billingDetail: String {
+        if plan.caption == "per year" {
+            return "\(plan.price) per year. Cancel anytime."
+        }
+        if plan.kind == .yearlyIntro {
+            return "\(plan.price) \(plan.caption). Cancel anytime."
+        }
+        return "\(plan.caption). Cancel anytime."
+    }
+}
+
+private struct PaywallPurchaseButton: View {
+    let title: String
+    let disabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            GlassSurface(
+                cornerRadius: Theme.Radius.pill,
+                tint: disabled ? .clear : Theme.Colors.glassSelectedStrong,
+                interactive: true
+            ) {
+                HStack(spacing: 9) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 16, weight: .black))
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .tracking(0.5)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.76)
+                }
+                .foregroundStyle(disabled ? Theme.Colors.disabled : Theme.Colors.ink)
+                .frame(maxWidth: .infinity)
+                .frame(height: 52)
+            }
+        }
+        .buttonStyle(PressScaleButtonStyle())
+        .disabled(disabled)
+        .padding(.horizontal, 22)
+        .accessibilityLabel(title)
+    }
 }
 
 private struct PaywallPlanCard: View {
@@ -197,7 +447,7 @@ private struct PaywallPlanCard: View {
             GlassSurface(
                 cornerRadius: Theme.Radius.md,
                 tint: selected ? Theme.Colors.glassSelected : Theme.Colors.cream.opacity(0.16),
-                interactive: true
+                interactive: false
             ) {
                 HStack(spacing: 14) {
                     Image(systemName: selected ? "largecircle.fill.circle" : "circle")
@@ -231,10 +481,18 @@ private struct PaywallPlanCard: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
                 .frame(maxWidth: .infinity)
+                .contentShape(.rect)
+            }
+            .overlay {
+                if selected {
+                    RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                        .strokeBorder(Theme.Colors.denim.opacity(0.68), lineWidth: 2)
+                }
             }
         }
         .buttonStyle(PressScaleButtonStyle())
         .accessibilityLabel("\(plan.title), \(plan.price), \(plan.caption)")
+        .accessibilityHint("Double-tap to select this plan")
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
