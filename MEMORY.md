@@ -22,9 +22,11 @@
   two attempts add the same inputs twice and the session refuses them.
 - **Camera zoom is expressed in Apple-style display factors.** Back-camera discovery prefers the
   Triple/Dual-Wide/Dual virtual devices so AVFoundation can switch physical lenses continuously.
-  On iOS 18+ `displayVideoZoomFactorMultiplier` and `systemRecommendedVideoZoomRange` are the
-  source of truth for labels/range; iOS 17 derives the 0.5x multiplier from the ultra-wide-to-wide
-  switch point. Raw device zoom and all `session.inputs` access stay on `sessionQueue`.
+  On iOS 18+ `displayVideoZoomFactorMultiplier` is the source of truth for labels. Always preserve
+  `minAvailableVideoZoomFactor` as the lower bound because `systemRecommendedVideoZoomRange` can
+  exclude the 0.5x ultra-wide lens; its upper bound may still cap impractical digital zoom. iOS 17
+  derives the 0.5x multiplier from the ultra-wide-to-wide switch point. Raw device zoom and all
+  `session.inputs` access stay on `sessionQueue`.
 - **Built-in pose sources are read from the app bundle, never copied into Documents.**
   `persistBundledOverlay` copies only the small prepared JPEG; `sourceFileName` gets a
   `bundle:`-prefixed resource name that `resolvedOverlaySourceURL` resolves against `Bundle.main`

@@ -341,7 +341,9 @@ final class CameraController {
 
         if #available(iOS 18, *) {
             if let recommended = device.activeFormat.systemRecommendedVideoZoomRange {
-                rawMinimum = max(rawMinimum, recommended.lowerBound)
+                // The recommended range can start above an ultra-wide lens. Keep
+                // the device's real minimum so overlays can still be matched at
+                // 0.5x, while retaining Apple's useful upper zoom limit.
                 rawMaximum = min(rawMaximum, recommended.upperBound)
             }
         } else {

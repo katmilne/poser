@@ -409,7 +409,9 @@ private struct CameraZoomControl: View {
                         Text(Self.label(for: camera.zoomFactor))
                             .font(.system(size: 13, weight: .black, design: .rounded))
                             .monospacedDigit()
-                            .frame(width: 42)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .frame(minWidth: 42)
 
                         Slider(value: zoomProgress, in: 0...1)
                             .tint(Theme.Colors.ink)
