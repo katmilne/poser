@@ -25,8 +25,13 @@ struct CameraView: View {
     @State private var referenceStripCollapsed = false
     @State private var pinchStartZoom: CGFloat?
 
-    private var favoriteOverlays: [OverlayRecord] {
-        overlays.filter(\.isFavorite)
+    /// The strip's first slot is reserved for the pose currently in use, even
+    /// when it isn't a favorite: tapping its thumbnail is the only way to flip
+    /// or clear it, so it must always be reachable from the strip.
+    private var stripOverlays: [OverlayRecord] {
+        let favorites = overlays.filter(\.isFavorite)
+        guard let selected = appState.selectedGhost else { return favorites }
+        return [selected] + favorites.filter { $0.id != selected.id }
     }
 
     var body: some View {
@@ -244,7 +249,7 @@ struct CameraView: View {
                         GlassIconButton(symbol: "square.grid.2x2", accessibilityLabel: "Open pose library", size: 40) {
                             appState.showsPoseLibrary = true
                         }
-                        if favoriteOverlays.isEmpty {
+                        if stripOverlays.isEmpty {
                             Button("FAVORITE A POSE") { appState.showsPoseLibrary = true }
                                 .font(.system(size: 12, weight: .black))
                                 .foregroundStyle(Theme.Colors.ink)
@@ -252,7 +257,7 @@ struct CameraView: View {
                         } else {
                             ScrollView(.horizontal) {
                                 HStack(spacing: 8) {
-                                    ForEach(favoriteOverlays) { overlay in
+                                    ForEach(stripOverlays) { overlay in
                                         PoseThumbnail(
                                             overlay: overlay,
                                             selected: appState.selectedGhost?.id == overlay.id,
