@@ -330,7 +330,7 @@ struct CameraView: View {
                     }
                     GhostOpacitySlider(opacity: Bindable(appState).ghostOpacity)
                         .disabled(appState.selectedGhost == nil)
-                        .opacity(appState.selectedGhost == nil ? 0.4 : 1)
+                        .opacity(appState.selectedGhost == nil ? 0 : 1)
                 }
                 .padding(10)
             }

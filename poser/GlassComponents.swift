@@ -112,6 +112,8 @@ struct GlassTextButton: View {
                 Text(title)
                     .font(.system(size: compact ? 13 : 15, weight: selected ? .heavy : .bold))
                     .tracking(0.4)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(disabled ? Theme.Colors.disabled : Theme.Colors.ink)
                     .padding(.horizontal, compact ? 14 : 20)
                     .frame(minWidth: minWidth)

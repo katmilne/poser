@@ -146,11 +146,25 @@ enum BundledPoseCatalog {
 
     /// Fresh installs start with one solo, one duo, and one group pose
     /// favourited so the camera's pose strip is never empty on first open.
-    private static let starterFavoriteIDs: Set<String> = [
+    /// Listed in the order they should appear in the strip: solo, then duo,
+    /// then group.
+    private static let starterFavoriteIDs: [String] = [
         "builtin-crosswalk-lean",   // solo · female · cool
         "builtin-table-heart-duo",  // duo · female · cute
         "builtin-trio-street-lean"  // group · female · cool
     ]
+
+    /// The strip sorts favourites by `addedAt` descending, so the first
+    /// starter (solo) needs the newest stamp. The bundled poses each get an
+    /// `addedAt` taken while they are persisted one after another, and that
+    /// sequential file I/O drifts the wall clock far enough that the
+    /// last-seeded starter would otherwise sort newest — reversing the strip
+    /// to group → duo → solo. Stamping the trio from one shared instant,
+    /// spaced a second per rank, pins them to solo → duo → group regardless of
+    /// how long seeding takes or where the poses sit in `poses`.
+    private static func starterFavoriteAddedAt(seed: Date, rank: Int) -> Date {
+        seed.addingTimeInterval(Double(-rank))
+    }
 
     private static let poses = [
         Pose(id: "builtin-cool-sidewalk-sit", name: "sidewalk-sit", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
@@ -292,6 +306,10 @@ enum BundledPoseCatalog {
                 defaults.integer(forKey: catalogVersionKey) < catalogVersion || catalogNeedsRepair
             else { return }
 
+            // One instant shared by every starter favourite so the trio's
+            // relative order does not drift as the seed loop's file I/O elapses.
+            let favoriteSeed = Date()
+
             for (index, pose) in poses.enumerated() {
                 guard let sourceURL = Bundle.main.url(
                     forResource: pose.sourceName,
@@ -313,6 +331,9 @@ enum BundledPoseCatalog {
                     order: index,
                     cropCenter: pose.cropCenter
                 )
+                let starterRank = isFirstInstall ? starterFavoriteIDs.firstIndex(of: pose.id) : nil
+                let overlayAddedAt = starterRank
+                    .map { starterFavoriteAddedAt(seed: favoriteSeed, rank: $0) } ?? stored.addedAt
                 if let record = recordsByID[pose.id] {
                     record.fileName = stored.fileName
                     record.width = stored.width
@@ -323,14 +344,15 @@ enum BundledPoseCatalog {
                     record.crop = stored.crop
                     record.canvasAspect = stored.canvasAspect
                     record.tags = pose.tags
-                    if isFirstInstall && starterFavoriteIDs.contains(pose.id) {
+                    if starterRank != nil {
                         record.isFavorite = true
+                        record.addedAt = overlayAddedAt
                     }
                 } else {
                     modelContext.insert(OverlayRecord(
                         id: stored.id,
                         fileName: stored.fileName,
-                        addedAt: stored.addedAt,
+                        addedAt: overlayAddedAt,
                         width: stored.width,
                         height: stored.height,
                         sourceFileName: stored.sourceFileName,
@@ -339,7 +361,7 @@ enum BundledPoseCatalog {
                         crop: stored.crop,
                         canvasAspect: stored.canvasAspect,
                         tags: pose.tags,
-                        isFavorite: isFirstInstall && starterFavoriteIDs.contains(pose.id)
+                        isFavorite: starterRank != nil
                     ))
                 }
             }
