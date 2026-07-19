@@ -144,12 +144,12 @@ enum BundledPoseCatalog {
     private static let catalogVersion = 10
     private static let catalogVersionKey = "bundledPoseCatalogVersion"
 
-    /// Fresh installs start with one selfie, one solo, and one group pose
+    /// Fresh installs start with one solo, one duo, and one group pose
     /// favourited so the camera's pose strip is never empty on first open.
     private static let starterFavoriteIDs: Set<String> = [
-        "builtin-mirror-phone-selfie",
-        "builtin-sunny-curb-sit",
-        "builtin-friends-cheer"
+        "builtin-crosswalk-lean",   // solo · female · cool
+        "builtin-table-heart-duo",  // duo · female · cute
+        "builtin-trio-street-lean"  // group · female · cool
     ]
 
     private static let poses = [
