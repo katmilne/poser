@@ -178,12 +178,15 @@ final class PremiumStore {
             let result = try await Purchases.shared.purchase(package: package)
             if !result.userCancelled {
                 apply(result.customerInfo)
-                if !isPremium {
+                if isPremium {
+                    Analytics.track("purchase_completed", ["plan": plan.kind.rawValue])
+                } else {
                     purchaseError = "The App Store completed the purchase, but Premium is not active yet. Try Restore Purchases in a moment."
                 }
             }
         } catch {
             purchaseError = Self.friendlyMessage(for: error)
+            Analytics.captureError(error, area: "purchase")
         }
     }
 
@@ -194,9 +197,11 @@ final class PremiumStore {
         do {
             let info = try await Purchases.shared.restorePurchases()
             apply(info)
+            if isPremium { Analytics.track("purchase_restored") }
             return isPremium
         } catch {
             purchaseError = Self.friendlyMessage(for: error)
+            Analytics.captureError(error, area: "restore_purchase")
             return false
         }
     }

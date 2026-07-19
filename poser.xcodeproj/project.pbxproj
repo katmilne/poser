@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		46BD90A330075B610047B1A3 /* RevenueCat in Frameworks */ = {isa = PBXBuildFile; productRef = 46BD90A230075B610047B1A2 /* RevenueCat */; };
+		579231F6461C91D91B7C41DA /* Sentry in Frameworks */ = {isa = PBXBuildFile; productRef = 359839A96CA09C0A3FFD4723 /* Sentry */; };
+		B36BA5F64B7C632AAFFCF1EF /* Aptabase in Frameworks */ = {isa = PBXBuildFile; productRef = B3B64D45A1CAAF52E7658C6C /* Aptabase */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +30,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				46BD90A330075B610047B1A3 /* RevenueCat in Frameworks */,
+				579231F6461C91D91B7C41DA /* Sentry in Frameworks */,
+				B36BA5F64B7C632AAFFCF1EF /* Aptabase in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +75,8 @@
 			name = poser;
 			packageProductDependencies = (
 				46BD90A230075B610047B1A2 /* RevenueCat */,
+				359839A96CA09C0A3FFD4723 /* Sentry */,
+				B3B64D45A1CAAF52E7658C6C /* Aptabase */,
 			);
 			productName = poser;
 			productReference = 46BD908330075B610047B166 /* poser.app */;
@@ -102,6 +108,8 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				46BD90A130075B610047B1A1 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */,
+				D674DAA976E93A5C88C83B4E /* XCRemoteSwiftPackageReference "sentry-cocoa" */,
+				79B0C0C302C6CCAB06C460A1 /* XCRemoteSwiftPackageReference "aptabase-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 46BD908430075B610047B166 /* Products */;
@@ -355,13 +363,39 @@
 				minimumVersion = 5.0.0;
 			};
 		};
+		79B0C0C302C6CCAB06C460A1 /* XCRemoteSwiftPackageReference "aptabase-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/aptabase/aptabase-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.3.11;
+			};
+		};
+		D674DAA976E93A5C88C83B4E /* XCRemoteSwiftPackageReference "sentry-cocoa" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/getsentry/sentry-cocoa";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 9.22.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		359839A96CA09C0A3FFD4723 /* Sentry */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D674DAA976E93A5C88C83B4E /* XCRemoteSwiftPackageReference "sentry-cocoa" */;
+			productName = Sentry;
+		};
 		46BD90A230075B610047B1A2 /* RevenueCat */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 46BD90A130075B610047B1A1 /* XCRemoteSwiftPackageReference "purchases-ios-spm" */;
 			productName = RevenueCat;
+		};
+		B3B64D45A1CAAF52E7658C6C /* Aptabase */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 79B0C0C302C6CCAB06C460A1 /* XCRemoteSwiftPackageReference "aptabase-swift" */;
+			productName = Aptabase;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

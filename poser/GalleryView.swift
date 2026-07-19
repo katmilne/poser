@@ -255,6 +255,7 @@ struct GalleryView: View {
             sharePayload = SharePayload(url: try await exportURL(for: shot))
         } catch {
             saveMessage = error.localizedDescription
+            Analytics.captureError(error, area: "gallery_share")
         }
     }
 
@@ -267,6 +268,7 @@ struct GalleryView: View {
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             saveMessage = error.localizedDescription
+            Analytics.captureError(error, area: "photo_library_save")
         }
     }
 
@@ -313,6 +315,7 @@ struct GalleryView: View {
                 appState.showsGallery = false
             } catch {
                 saveMessage = error.localizedDescription
+                Analytics.captureError(error, area: "restore_overlay")
             }
         }
     }

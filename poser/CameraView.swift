@@ -327,7 +327,10 @@ struct CameraView: View {
                     withAnimation(.poserGlide) { viewfinderZoomOut = 0 }
                     Task {
                         do { try await camera.switchCamera() }
-                        catch { errorMessage = "Switching cameras failed. \(error.localizedDescription)" }
+                        catch {
+                            errorMessage = "Switching cameras failed. \(error.localizedDescription)"
+                            Analytics.captureError(error, area: "camera_switch")
+                        }
                     }
                 }
             }
@@ -481,8 +484,10 @@ struct CameraView: View {
             modelContext.insert(record)
             try modelContext.save()
             appState.presentedShot = record
+            Analytics.track("photo_captured", ["has_ghost": ghostSnapshot != nil])
         } catch {
             errorMessage = "Capturing the photo failed. \(error.localizedDescription)"
+            Analytics.captureError(error, area: "camera_capture")
         }
     }
 }

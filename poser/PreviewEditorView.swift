@@ -517,6 +517,7 @@ struct PreviewEditorView: View {
             return ImageStore.shared.shotDisplayURL(shot)
         } catch {
             alertMessage = "The edit recipe is safe, but POSER couldn't develop its album preview."
+            Analytics.captureError(error, area: "preview_develop")
             return nil
         }
     }
@@ -578,6 +579,7 @@ struct PreviewEditorView: View {
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             alertMessage = error.localizedDescription
+            Analytics.captureError(error, area: "photo_library_save")
         }
     }
 
@@ -595,6 +597,7 @@ struct PreviewEditorView: View {
             return try await ImageStore.shared.polaroidExportURL(for: sourceURL)
         } catch {
             alertMessage = error.localizedDescription
+            Analytics.captureError(error, area: "polaroid_export")
             return nil
         }
     }

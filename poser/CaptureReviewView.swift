@@ -116,6 +116,7 @@ struct CaptureReviewView: View {
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             alertMessage = error.localizedDescription
+            Analytics.captureError(error, area: "capture_review_share")
         }
     }
 
@@ -130,6 +131,7 @@ struct CaptureReviewView: View {
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             alertMessage = error.localizedDescription
+            Analytics.captureError(error, area: "photo_library_save")
         }
     }
 

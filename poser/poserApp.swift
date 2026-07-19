@@ -6,6 +6,10 @@ struct PoserApp: App {
     @State private var appState = AppState()
     @State private var premium = PremiumStore()
 
+    init() {
+        Analytics.configure()
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()

@@ -228,6 +228,7 @@ struct StickerMakerView: View {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         } catch {
             errorMessage = error.localizedDescription
+            Analytics.captureError(error, area: "sticker_camera")
         }
     }
 
@@ -299,6 +300,10 @@ struct StickerMakerView: View {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         } catch {
             errorMessage = error.localizedDescription
+            // Expected "no subject found" outcomes are filtered out centrally
+            // in Analytics.configure()'s beforeSend — only genuine failures
+            // (unreadable image, write failure) become a Sentry issue.
+            Analytics.captureError(error, area: "cutout")
         }
     }
 
@@ -323,10 +328,12 @@ struct StickerMakerView: View {
             modelContext.insert(record)
             try modelContext.save()
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            Analytics.track("sticker_created")
             onCreated(record)
             dismiss()
         } catch {
             errorMessage = error.localizedDescription
+            Analytics.captureError(error, area: "sticker_persist")
         }
     }
 }

@@ -254,10 +254,12 @@ struct PoseLibraryView: View {
             }
             try modelContext.save()
             if !newRecords.isEmpty {
+                Analytics.track("poses_imported", ["count": newRecords.count])
                 framingRequest = PoseFramingRequest(overlays: newRecords, tagsAfter: true)
             }
         } catch {
             importError = error.localizedDescription
+            Analytics.captureError(error, area: "pose_import")
         }
     }
 }

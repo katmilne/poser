@@ -10,6 +10,7 @@ enum ExportPreferences {
 struct SettingsSheet: View {
     @AppStorage(ExportPreferences.includesPolaroidFrameKey) private var includesPolaroidFrame = false
     @AppStorage(ExportPreferences.autoSaveToCameraRollKey) private var autoSaveToCameraRoll = false
+    @AppStorage(Analytics.optOutKey) private var analyticsOptOut = false
     @Environment(PremiumStore.self) private var premium
     @Environment(\.dismiss) private var dismiss
 
@@ -42,6 +43,7 @@ struct SettingsSheet: View {
                         autoSaveCard
                         exportCard
                         restoreCard
+                        analyticsCard
 
 #if DEBUG
                         SettingsCard(tint: Theme.Colors.cream.opacity(0.16)) {
@@ -218,6 +220,35 @@ struct SettingsSheet: View {
                     restorePurchases()
                 }
             }
+        }
+    }
+
+    private var analyticsCard: some View {
+        SettingsCard(tint: Theme.Colors.sky.opacity(0.22)) {
+            Toggle(isOn: Binding(
+                get: { !analyticsOptOut },
+                set: { analyticsOptOut = !$0 }
+            )) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.denim)
+                        .frame(width: 40, height: 40)
+                        .background(Theme.Colors.sky.opacity(0.52), in: Circle())
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("SHARE ANONYMOUS USAGE DATA")
+                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .tracking(0.7)
+                        Text("Helps us see which features are used. Never includes your photos, poses, or stickers. Crash reports are separate and always on — see Privacy Policy.")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.Colors.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .tint(Theme.Colors.denim)
         }
     }
 
