@@ -18,15 +18,13 @@ final class AppState {
     var showsSettings = false
 
     func selectGhost(_ overlay: OverlayRecord) {
-        selectedGhost = overlay
+        activateGhost(overlay)
         libraryPose = overlay
-        ghostFlipped = false
-        overlay.lastUsedAt = .now
     }
 
     func cycleGhost(_ overlay: OverlayRecord) {
         guard selectedGhost?.id == overlay.id else {
-            selectGhost(overlay)
+            activateGhost(overlay)
             return
         }
         if !ghostFlipped {
@@ -35,5 +33,11 @@ final class AppState {
             selectedGhost = nil
             ghostFlipped = false
         }
+    }
+
+    private func activateGhost(_ overlay: OverlayRecord) {
+        selectedGhost = overlay
+        ghostFlipped = false
+        overlay.lastUsedAt = .now
     }
 }
