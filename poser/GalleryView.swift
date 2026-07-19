@@ -639,7 +639,12 @@ private struct LightboxLayer: View {
                 .padding(.bottom, 14)
             }
             .opacity(controlsOpacity)
-            .allowsHitTesting(controlsOpacity > 0.85)
+            // Threshold is low on purpose: it only needs to rule out taps while
+            // still mid-drag-to-dismiss (dragOffset far from 0). Gating this near
+            // 1 instead made it track the ~0.5s opening animation too, so "USE
+            // POSE" - the button people reach for right as a photo opens - ate
+            // the first tap or two before progress caught up.
+            .allowsHitTesting(controlsOpacity > 0.4)
         }
     }
 
