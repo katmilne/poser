@@ -14,6 +14,7 @@ struct GalleryView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \ShotRecord.takenAt, order: .reverse) private var shots: [ShotRecord]
+    @Query private var overlays: [OverlayRecord]
     @State private var page = 0
     @State private var lightboxShot: ShotRecord?
     @State private var pocketFrames: [String: CGRect] = [:]
@@ -24,10 +25,29 @@ struct GalleryView: View {
     @State private var sharePayload: SharePayload?
     @State private var editingShot: ShotRecord?
 
-    private var pages: [[ShotRecord]] {
-        stride(from: 0, to: shots.count, by: 4).map { start in
-            Array(shots[start..<min(start + 4, shots.count)])
+    // Each photo's page and pocket are assigned once, from its own arrival
+    // order, and never recomputed relative to photos taken afterwards — so
+    // an already-placed photo can't jump to a different pocket or page when
+    // a new one is added. Fill order within a page is bottom-right,
+    // bottom-left, top-right, top-left (see AlbumPage), so the 1st photo of
+    // a page is pinned to the bottom-right pocket for good; the 2nd pins to
+    // bottom-left; and so on. Pages are then shown newest-first (page 0 is
+    // whichever page is still being filled).
+    private var pages: [[ShotRecord?]] {
+        let chronological = Array(shots.reversed()) // oldest → newest, stable arrival order
+        let fillOrder = [3, 2, 1, 0] // pocket index each arrival position pins to
+        var groups: [[ShotRecord?]] = []
+        var index = 0
+        while index < chronological.count {
+            var pocketSlots: [ShotRecord?] = Array(repeating: nil, count: 4)
+            let group = chronological[index..<min(index + 4, chronological.count)]
+            for (i, shot) in group.enumerated() {
+                pocketSlots[fillOrder[i]] = shot
+            }
+            groups.append(pocketSlots)
+            index += 4
         }
+        return groups.reversed()
     }
 
     var body: some View {
@@ -44,9 +64,9 @@ struct GalleryView: View {
                         emptyAlbum
                     } else {
                         TabView(selection: $page) {
-                            ForEach(Array(pages.enumerated()), id: \.offset) { pageIndex, pageShots in
+                            ForEach(Array(pages.enumerated()), id: \.offset) { pageIndex, pageSlots in
                                 AlbumPage(
-                                    shots: pageShots,
+                                    slots: pageSlots,
                                     activeLightboxID: lightboxShot?.id,
                                     animateIn: page == pageIndex,
                                     onOpen: { open($0, from: $1) },
@@ -88,6 +108,7 @@ struct GalleryView: View {
                 if let shot = lightboxShot {
                     LightboxLayer(
                         shot: shot,
+                        posedPoseStillAvailable: posedPoseStillAvailable(for: shot),
                         seated: pocketFrames[shot.id],
                         screen: proxy.size,
                         progress: $progress,
@@ -127,38 +148,8 @@ struct GalleryView: View {
             } message: {
                 Text(saveMessage ?? "")
             }
-#if DEBUG
-            .task { seedTempTestShotsIfNeeded() }
-#endif
         }
     }
-
-#if DEBUG
-    private func seedTempTestShotsIfNeeded() {
-        guard shots.isEmpty else { return }
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let shotsDir = docs.appending(path: "shots")
-        let displayDir = shotsDir.appending(path: "display")
-        try? FileManager.default.createDirectory(at: displayDir, withIntermediateDirectories: true)
-        let colors: [UIColor] = [.systemRed, .systemBlue, .systemGreen, .systemOrange, .systemPurple]
-        for color in colors {
-            let id = UUID().uuidString.lowercased()
-            let fileName = "\(id).jpg"
-            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 600, height: 800))
-            let image = renderer.image { ctx in
-                color.setFill()
-                ctx.fill(CGRect(x: 0, y: 0, width: 600, height: 800))
-            }
-            if let data = image.jpegData(compressionQuality: 0.9) {
-                try? data.write(to: shotsDir.appending(path: fileName))
-                try? data.write(to: displayDir.appending(path: fileName))
-            }
-            let record = ShotRecord(id: id, fileName: fileName, facing: .back, width: 600, height: 800)
-            modelContext.insert(record)
-        }
-        try? modelContext.save()
-    }
-#endif
 
     private var albumBackground: some View {
         Image(.cloudBackground)
@@ -279,6 +270,16 @@ struct GalleryView: View {
         }
     }
 
+    /// A shot's ghost reference outlives the pose it was copied from — deleting
+    /// a user pose never touches past photos' thumbnails (see
+    /// `ImageStore.shotGhostURL`). So "was this pose deleted?" isn't answered by
+    /// the reference itself; it's answered by whether that pose is still in the
+    /// user's collection right now.
+    private func posedPoseStillAvailable(for shot: ShotRecord) -> Bool {
+        guard let ghost = shot.ghost else { return false }
+        return overlays.contains { $0.id == ghost.overlayId }
+    }
+
     private func useGhost(from shot: ShotRecord) {
         guard let ghost = shot.ghost else { return }
         let descriptor = FetchDescriptor<OverlayRecord>(predicate: #Predicate { $0.id == ghost.overlayId })
@@ -318,7 +319,11 @@ struct GalleryView: View {
 }
 
 private struct AlbumPage: View {
-    let shots: [ShotRecord]
+    // Fixed pocket layout for this page — index order is grid reading order
+    // (top-left, top-right, bottom-left, bottom-right). Assigned once by
+    // GalleryView.pages and never re-derived here, so a pocket's contents
+    // can't shift just because a sibling page changed.
+    let slots: [ShotRecord?]
     let activeLightboxID: String?
     let animateIn: Bool
     let onOpen: (ShotRecord, CGFloat) -> Void
@@ -331,15 +336,10 @@ private struct AlbumPage: View {
         let shot: ShotRecord?
     }
 
-    // Photos read backwards through the grid — bottom-right, bottom-left,
-    // top-right, top-left — so the newest of the page sits in the bottom-right
-    // pocket, like slotting the latest print into an album from the back. Empty
-    // pockets fill the top-left, keeping every page anchored to the lower right.
-    private var slots: [Slot] {
-        let filled = shots.reversed().map { Slot(id: $0.id, shot: $0) }
-        let emptyCount = max(0, 4 - filled.count)
-        let empties = (0..<emptyCount).map { Slot(id: "empty-\($0)", shot: nil) }
-        return empties + filled
+    private var identifiedSlots: [Slot] {
+        slots.enumerated().map { index, shot in
+            Slot(id: shot?.id ?? "empty-\(index)", shot: shot)
+        }
     }
 
     var body: some View {
@@ -352,7 +352,7 @@ private struct AlbumPage: View {
                 }
                 .shadow(color: Theme.stickerShadow, radius: 24, y: 8)
             LazyVGrid(columns: columns, spacing: 16) {
-                ForEach(Array(slots.enumerated()), id: \.element.id) { index, slot in
+                ForEach(Array(identifiedSlots.enumerated()), id: \.element.id) { index, slot in
                     if let shot = slot.shot {
                         PhotoPocket(
                             shot: shot,
@@ -534,6 +534,7 @@ private struct EmptyPocket: View {
 // Full-screen photo layer with a custom "slide out of / back into the pocket" transition.
 private struct LightboxLayer: View {
     let shot: ShotRecord
+    let posedPoseStillAvailable: Bool
     let seated: CGRect?
     let screen: CGSize
     @Binding var progress: CGFloat
@@ -610,19 +611,10 @@ private struct LightboxLayer: View {
                 HStack {
                     Spacer()
                     if shot.ghost != nil {
-                        VStack(alignment: .trailing, spacing: 7) {
-                            GlassTextButton(title: "USE GHOST", compact: true, action: onUseGhost)
-                            if let ghostURL = ImageStore.shared.shotGhostURL(shot) {
-                                LocalFileImage(url: ghostURL, maxPixel: 160)
-                                    .frame(width: 40, height: 53)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    .overlay {
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .stroke(Theme.Colors.glassEdge, lineWidth: 1)
-                                    }
-                                    .shadow(color: Theme.stickerShadow, radius: 6, y: 2)
-                                    .accessibilityLabel("Reference pose used for this photo")
-                            }
+                        if posedPoseStillAvailable {
+                            UseGhostButton(shot: shot, action: onUseGhost)
+                        } else {
+                            NoPoseUsedBadge()
                         }
                     }
                 }
@@ -672,5 +664,62 @@ private struct LightboxLayer: View {
 
     private func lerp(_ a: CGPoint, _ b: CGPoint, _ t: CGFloat) -> CGPoint {
         CGPoint(x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t)
+    }
+}
+
+/// The reference pose thumbnail and its "use it again" action are one tap
+/// target — a single Liquid Glass rounded rectangle with the thumbnail and
+/// label side by side, rather than two separately-tappable pieces stacked
+/// on top of each other. Corners match the thumbnail's own radius so the
+/// whole button reads as one symmetrical shape.
+private struct UseGhostButton: View {
+    let shot: ShotRecord
+    let action: () -> Void
+
+    var body: some View {
+        let thumbRadius: CGFloat = 10
+        Button(action: action) {
+            GlassSurface(
+                cornerRadius: thumbRadius,
+                tint: Theme.Colors.black.opacity(0.14),
+                interactive: true
+            ) {
+                HStack(spacing: 10) {
+                    if let ghostURL = ImageStore.shared.shotGhostURL(shot) {
+                        LocalFileImage(url: ghostURL, maxPixel: 200)
+                            .frame(width: 42, height: 56)
+                            .clipShape(RoundedRectangle(cornerRadius: thumbRadius, style: .continuous))
+                    }
+                    Text("USE POSE")
+                        .font(.system(size: 13, weight: .bold))
+                        .tracking(0.4)
+                        .foregroundStyle(.white)
+                        .padding(.trailing, 10)
+                }
+                .padding(.leading, 3)
+                .padding(.vertical, 3)
+            }
+        }
+        .buttonStyle(PressScaleButtonStyle())
+        .accessibilityLabel("Use the reference pose from this photo")
+    }
+}
+
+/// Shown in place of `UseGhostButton` once the user pose a photo was matched
+/// against has been deleted from their collection — the ghost thumbnail
+/// itself survives (see `ImageStore.shotGhostURL`), but there is nothing left
+/// to reselect, so this reads as "nothing to use" rather than silently
+/// hiding the fact that a pose was ever involved.
+private struct NoPoseUsedBadge: View {
+    var body: some View {
+        GlassSurface(cornerRadius: Theme.Radius.pill, tint: Theme.Colors.black.opacity(0.10)) {
+            Text("NO POSE USED")
+                .font(.system(size: 11, weight: .black, design: .monospaced))
+                .tracking(0.8)
+                .foregroundStyle(Theme.Colors.textDim)
+                .padding(.horizontal, 14)
+                .frame(height: 34)
+        }
+        .accessibilityLabel("The pose used for this photo was deleted")
     }
 }

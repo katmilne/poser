@@ -281,7 +281,7 @@ struct PreviewEditorView: View {
             }
         } label: {
             VStack(spacing: 2) {
-                Image(systemName: stickerMakerLocked ? "crown.fill" : "person.crop.rectangle.badge.plus")
+                Image(systemName: stickerMakerLocked ? "sparkles" : "person.crop.rectangle.badge.plus")
                     .font(.system(size: 22, weight: .semibold))
                 Text("MAKE")
                     .font(.system(size: 8, weight: .black))

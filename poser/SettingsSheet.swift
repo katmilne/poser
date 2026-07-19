@@ -105,7 +105,7 @@ struct SettingsSheet: View {
         ) {
             VStack(spacing: 14) {
                 HStack(spacing: 12) {
-                    Image(systemName: premium.isUnlocked ? "checkmark.seal.fill" : "crown.fill")
+                    Image(systemName: premium.isUnlocked ? "checkmark.seal.fill" : "sparkles")
                         .font(.system(size: 24, weight: .bold))
                         .foregroundStyle(premium.isUnlocked ? Theme.Colors.denim : Theme.Colors.tangerine)
                         .frame(width: 40, height: 40)

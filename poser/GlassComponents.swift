@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct GlassSurface<Content: View>: View {
-    let cornerRadius: CGFloat
+    private let shape: AnyShape
     let tint: Color
     let interactive: Bool
     @ViewBuilder let content: () -> Content
@@ -13,7 +13,22 @@ struct GlassSurface<Content: View>: View {
         interactive: Bool = false,
         @ViewBuilder content: @escaping () -> Content
     ) {
-        self.cornerRadius = cornerRadius
+        self.shape = AnyShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        self.tint = tint
+        self.interactive = interactive
+        self.content = content
+    }
+
+    /// For surfaces whose corners shouldn't all match — e.g. one end pinched
+    /// tight to nest against an embedded image's own corner radius while the
+    /// other stays a full pill cap.
+    init(
+        cornerRadii: RectangleCornerRadii,
+        tint: Color = .clear,
+        interactive: Bool = false,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.shape = AnyShape(UnevenRoundedRectangle(cornerRadii: cornerRadii, style: .continuous))
         self.tint = tint
         self.interactive = interactive
         self.content = content
@@ -23,26 +38,19 @@ struct GlassSurface<Content: View>: View {
         if #available(iOS 26, *) {
             if interactive {
                 content()
-                    .glassEffect(
-                        .clear.tint(tint).interactive(),
-                        in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    )
+                    .glassEffect(.clear.tint(tint).interactive(), in: shape)
             } else {
                 content()
-                    .glassEffect(
-                        .clear.tint(tint),
-                        in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    )
+                    .glassEffect(.clear.tint(tint), in: shape)
             }
         } else {
             content()
                 .background(.ultraThinMaterial)
                 .background(Theme.Colors.glassFallback.opacity(0.38))
                 .background(tint)
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .clipShape(shape)
                 .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(Theme.Colors.glassEdge, lineWidth: 1)
+                    shape.stroke(Theme.Colors.glassEdge, lineWidth: 1)
                 }
                 .shadow(color: Theme.charmShadow, radius: 12, y: 3)
         }

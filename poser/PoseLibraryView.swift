@@ -155,7 +155,7 @@ struct PoseLibraryView: View {
     private var addPoseTileLabel: some View {
         GlassSurface(cornerRadius: Theme.Radius.md, tint: Theme.Colors.sky.opacity(0.18), interactive: true) {
             VStack(spacing: 12) {
-                Image(systemName: addPoseLocked ? "crown.fill" : "photo.badge.plus")
+                Image(systemName: addPoseLocked ? "sparkles" : "photo.badge.plus")
                     .font(.system(size: 32, weight: .semibold))
                     .foregroundStyle(addPoseLocked ? Theme.Colors.lemon : Theme.Colors.ink)
                 Text("Add pose")
