@@ -5,12 +5,15 @@ import SwiftUI
 import UIKit
 
 struct CameraView: View {
+    @AppStorage("hasSeenCameraHints") private var hasSeenCameraHints = false
     @Environment(AppState.self) private var appState
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
     @Query(sort: \OverlayRecord.addedAt, order: .reverse) private var overlays: [OverlayRecord]
 
     let camera: CameraController
+    @State private var hintAnchors: [String: Anchor<CGRect>] = [:]
+    @State private var showsHints = false
     @State private var timerSeconds = 0
     @State private var countdown: Int?
     @State private var captureBusy = false
@@ -40,6 +43,29 @@ struct CameraView: View {
         if favorites.contains(where: { $0.id == pinned.id }) { return favorites }
         return [pinned] + favorites
     }
+
+    private static let hintSteps: [HintStep] = [
+        HintStep(
+            id: "poseLibrary",
+            title: "PICK A POSE",
+            message: "Tap here to browse reference poses and float one over your camera."
+        ),
+        HintStep(
+            id: "shutter",
+            title: "LINE UP & SHOOT",
+            message: "Match the ghost, then tap the shutter for a clean, full-resolution photo."
+        ),
+        HintStep(
+            id: "album",
+            title: "YOUR ALBUM",
+            message: "Every photo you take lands here — edit, save, or share it anytime."
+        ),
+        HintStep(
+            id: "settings",
+            title: "SETTINGS",
+            message: "Manage exports, Premium, and more from here."
+        )
+    ]
 
     var body: some View {
         ZStack {
@@ -146,7 +172,16 @@ struct CameraView: View {
                 }
                 .transition(.opacity)
             }
+
+            if showsHints {
+                FeatureHintsOverlay(steps: Self.hintSteps, anchors: hintAnchors) {
+                    hasSeenCameraHints = true
+                    withAnimation(.poserGlide) { showsHints = false }
+                }
+                .zIndex(20)
+            }
         }
+        .collectHintAnchors(into: $hintAnchors)
         .modifier(HardwareCameraCaptureModifier(
             isEnabled: camera.isReady
                 && !captureBusy
@@ -158,6 +193,7 @@ struct CameraView: View {
             Task { await capture() }
         })
         .task { await camera.requestAccessAndStart() }
+        .task { await presentHintsIfNeeded() }
         .onDisappear { camera.stop() }
         .alert("Camera hiccup", isPresented: Binding(
             get: { errorMessage != nil },
@@ -167,6 +203,23 @@ struct CameraView: View {
         } message: {
             Text(errorMessage ?? "Please try again.")
         }
+    }
+
+    /// Shown once, the first time a new user reaches the live camera screen —
+    /// after onboarding's permission prompt has already settled, and only if
+    /// nothing else (a sheet, the shutter countdown) is already on screen.
+    @MainActor
+    private func presentHintsIfNeeded() async {
+        guard !hasSeenCameraHints else { return }
+        try? await Task.sleep(for: .seconds(0.8))
+        guard
+            camera.authorizationStatus == .authorized,
+            !appState.showsSettings,
+            !appState.showsPoseLibrary,
+            !appState.showsGallery,
+            appState.presentedShot == nil
+        else { return }
+        withAnimation(.poserGlide) { showsHints = true }
     }
 
     private var cameraZoomGesture: some Gesture {
@@ -218,6 +271,7 @@ struct CameraView: View {
                 }
                 .buttonStyle(PressScaleButtonStyle())
                 .accessibilityLabel("POSER settings")
+                .hintAnchor("settings")
                 Spacer()
                 GlassIconButton(
                     symbol: camera.flash.symbol,
@@ -258,10 +312,12 @@ struct CameraView: View {
                 GlassIconButton(symbol: "photo.on.rectangle", accessibilityLabel: "Open album") {
                     appState.showsGallery = true
                 }
+                .hintAnchor("album")
                 Spacer()
                 ShutterButton(enabled: camera.isReady && !captureBusy) {
                     Task { await capture() }
                 }
+                .hintAnchor("shutter")
                 Spacer()
                 GlassIconButton(
                     symbol: "arrow.triangle.2.circlepath",
@@ -296,6 +352,7 @@ struct CameraView: View {
                         GlassIconButton(symbol: "square.grid.2x2", accessibilityLabel: "Open pose library", size: 40) {
                             appState.showsPoseLibrary = true
                         }
+                        .hintAnchor("poseLibrary")
                         if stripOverlays.isEmpty {
                             Button("FAVORITE A POSE") { appState.showsPoseLibrary = true }
                                 .font(.system(size: 12, weight: .black))

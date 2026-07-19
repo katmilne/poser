@@ -8,6 +8,7 @@ import UIKit
 /// decorating surface on top, which saves back onto this same shot.
 struct CaptureReviewView: View {
     @AppStorage(ExportPreferences.includesPolaroidFrameKey) private var includesPolaroidFrame = false
+    @AppStorage(ExportPreferences.autoSaveToCameraRollKey) private var autoSaveToCameraRoll = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
@@ -85,8 +86,16 @@ struct CaptureReviewView: View {
 
     /// The record is already in the context, so keeping it is just letting the
     /// review dismiss — nothing else has to reach disk for an undecorated shot.
+    /// When auto-save is on, the Camera Roll copy happens in the background so
+    /// Done never waits on it.
     private func keep() {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
+        if autoSaveToCameraRoll {
+            Task {
+                guard let url = try? await exportURL() else { return }
+                try? await PhotoLibraryService.saveImage(at: url)
+            }
+        }
         dismiss()
     }
 

@@ -74,10 +74,10 @@ struct PaywallPlan: Identifiable {
 @MainActor
 @Observable
 final class PremiumStore {
-    /// RevenueCat public Apple API key for `space.concurrent.poser`.
-    /// Until it is filled in, the store runs "offline": paywalls render with
-    /// the fallback catalog above and purchasing is disabled.
-    private static let apiKey = "appl_REPLACE_WITH_POSER_PUBLIC_KEY"
+    /// Kept out of source control — see `Secrets.swift.example`. Until it is
+    /// filled in, the store runs "offline": paywalls render with the fallback
+    /// catalog above and purchasing is disabled.
+    private static let apiKey = Secrets.revenueCatAPIKey
 
     static let entitlementID = "premium"
     static let freePoseLimit = 3

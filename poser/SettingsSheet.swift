@@ -2,12 +2,14 @@ import SwiftUI
 
 enum ExportPreferences {
     static let includesPolaroidFrameKey = "includesPolaroidFrameInExports"
+    static let autoSaveToCameraRollKey = "autoSaveToCameraRoll"
 }
 
 /// Settings borrows StyleSnap's easy-to-scan card rhythm while keeping POSER's
 /// own fixed sky-and-glass visual language.
 struct SettingsSheet: View {
     @AppStorage(ExportPreferences.includesPolaroidFrameKey) private var includesPolaroidFrame = false
+    @AppStorage(ExportPreferences.autoSaveToCameraRollKey) private var autoSaveToCameraRoll = false
     @Environment(PremiumStore.self) private var premium
     @Environment(\.dismiss) private var dismiss
 
@@ -37,6 +39,7 @@ struct SettingsSheet: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
 
                         premiumCard
+                        autoSaveCard
                         exportCard
                         restoreCard
 
@@ -130,6 +133,33 @@ struct SettingsSheet: View {
                     }
                 }
             }
+        }
+    }
+
+    private var autoSaveCard: some View {
+        SettingsCard(tint: Theme.Colors.sky.opacity(0.22)) {
+            Toggle(isOn: $autoSaveToCameraRoll) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "square.and.arrow.down.on.square")
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundStyle(Theme.Colors.denim)
+                        .frame(width: 40, height: 40)
+                        .background(Theme.Colors.sky.opacity(0.52), in: Circle())
+                        .accessibilityHidden(true)
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("AUTO-SAVE TO CAMERA ROLL")
+                            .font(.system(size: 14, weight: .black, design: .rounded))
+                            .tracking(0.7)
+                        Text("Automatically save each photo to your phone's library when you tap Done.")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.Colors.textDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+            .tint(Theme.Colors.denim)
+            .accessibilityHint("Photos always stay in the POSER album regardless of this setting.")
         }
     }
 

@@ -35,7 +35,7 @@ struct PaywallView: View {
                 ScrollView {
                     VStack(spacing: context == .onboarding ? 14 : 12) {
                         GlassSurface(cornerRadius: 44) {
-                            Image(systemName: "crown.fill")
+                            Image(systemName: "sparkles")
                                 .font(.system(size: 40, weight: .semibold))
                                 .foregroundStyle(Theme.Colors.lemon)
                                 .frame(width: 88, height: 88)
@@ -102,9 +102,7 @@ struct PaywallView: View {
     private var header: some View {
         HStack {
             Spacer()
-            if context != .onboarding {
-                GlassIconButton(symbol: "xmark", accessibilityLabel: "Close paywall") { close() }
-            }
+            GlassIconButton(symbol: "xmark", accessibilityLabel: "Close paywall") { close() }
         }
         .padding(.horizontal, 18)
         .padding(.top, 12)

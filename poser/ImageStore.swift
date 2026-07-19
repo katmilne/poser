@@ -359,6 +359,13 @@ actor ImageStore {
         documentURL.appending(path: "overlays/\(record.fileName)")
     }
 
+    /// The reference pose photo copied alongside a shot at capture time, so a
+    /// tiny "what pose was this" thumbnail never depends on the original pose
+    /// still existing in the library.
+    nonisolated func shotGhostURL(_ record: ShotRecord) -> URL? {
+        record.ghost.map { documentURL.appending(path: "shots/ghosts/\($0.fileName)") }
+    }
+
     nonisolated func overlayFileExists(named fileName: String) -> Bool {
         let url = documentURL.appending(path: "overlays/\(fileName)")
         guard

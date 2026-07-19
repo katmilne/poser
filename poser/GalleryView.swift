@@ -127,10 +127,13 @@ struct GalleryView: View {
             } message: {
                 Text(saveMessage ?? "")
             }
+#if DEBUG
             .task { seedTempTestShotsIfNeeded() }
+#endif
         }
     }
 
+#if DEBUG
     private func seedTempTestShotsIfNeeded() {
         guard shots.isEmpty else { return }
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -155,6 +158,7 @@ struct GalleryView: View {
         }
         try? modelContext.save()
     }
+#endif
 
     private var albumBackground: some View {
         Image(.cloudBackground)
@@ -606,7 +610,20 @@ private struct LightboxLayer: View {
                 HStack {
                     Spacer()
                     if shot.ghost != nil {
-                        GlassTextButton(title: "USE GHOST", compact: true, action: onUseGhost)
+                        VStack(alignment: .trailing, spacing: 7) {
+                            GlassTextButton(title: "USE GHOST", compact: true, action: onUseGhost)
+                            if let ghostURL = ImageStore.shared.shotGhostURL(shot) {
+                                LocalFileImage(url: ghostURL, maxPixel: 160)
+                                    .frame(width: 40, height: 53)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(Theme.Colors.glassEdge, lineWidth: 1)
+                                    }
+                                    .shadow(color: Theme.stickerShadow, radius: 6, y: 2)
+                                    .accessibilityLabel("Reference pose used for this photo")
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 18)
