@@ -7,7 +7,7 @@ final class AppState {
     var selectedGhost: OverlayRecord?
     /// The pose most recently chosen from the pose library. It owns the strip's
     /// reserved first slot and only changes when a new pose is picked from that
-    /// page — tapping strip favorites swaps the active `selectedGhost` but leaves
+    /// page - tapping strip favorites swaps the active `selectedGhost` but leaves
     /// this untouched.
     var libraryPose: OverlayRecord?
     var ghostFlipped = false
@@ -39,5 +39,6 @@ final class AppState {
         selectedGhost = overlay
         ghostFlipped = false
         overlay.lastUsedAt = .now
+        Analytics.track("ghost_selected")
     }
 }

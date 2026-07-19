@@ -19,7 +19,7 @@ struct GlassSurface<Content: View>: View {
         self.content = content
     }
 
-    /// For surfaces whose corners shouldn't all match — e.g. one end pinched
+    /// For surfaces whose corners shouldn't all match - e.g. one end pinched
     /// tight to nest against an embedded image's own corner radius while the
     /// other stays a full pill cap.
     init(

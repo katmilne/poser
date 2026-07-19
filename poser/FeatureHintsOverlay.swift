@@ -62,7 +62,7 @@ struct FeatureHintsOverlay: View {
                     }
                     .transition(.opacity)
                 } else {
-                    // Anchor not laid out yet (or never will be) — move on
+                    // Anchor not laid out yet (or never will be) - move on
                     // instead of leaving a full-screen dim with nothing lit.
                     Color.clear.onAppear(perform: advance)
                 }

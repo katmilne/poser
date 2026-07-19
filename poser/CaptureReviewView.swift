@@ -85,7 +85,7 @@ struct CaptureReviewView: View {
     }
 
     /// The record is already in the context, so keeping it is just letting the
-    /// review dismiss — nothing else has to reach disk for an undecorated shot.
+    /// review dismiss - nothing else has to reach disk for an undecorated shot.
     /// When auto-save is on, the Camera Roll copy happens in the background so
     /// Done never waits on it.
     private func keep() {
@@ -104,6 +104,7 @@ struct CaptureReviewView: View {
         modelContext.delete(shot)
         try? modelContext.save()
         Task { await ImageStore.shared.deleteShot(shot) }
+        Analytics.track("capture_discarded")
         dismiss()
     }
 
@@ -113,6 +114,7 @@ struct CaptureReviewView: View {
         defer { isExporting = false }
         do {
             sharePayload = SharePayload(url: try await exportURL())
+            Analytics.track("photo_shared", ["source": "capture_review"])
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             alertMessage = error.localizedDescription
@@ -128,6 +130,7 @@ struct CaptureReviewView: View {
             try await PhotoLibraryService.saveImage(at: try await exportURL())
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             alertMessage = "Saved to Camera Roll."
+            Analytics.track("photo_saved", ["source": "capture_review"])
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             alertMessage = error.localizedDescription
@@ -136,7 +139,7 @@ struct CaptureReviewView: View {
     }
 
     /// A fresh capture is undecorated, so its clean original is the full-quality
-    /// export base — the polaroid frame is only wrapped on when the user asked
+    /// export base - the polaroid frame is only wrapped on when the user asked
     /// for it in settings.
     private func exportURL() async throws -> URL {
         let sourceURL = ImageStore.shared.shotOriginalURL(shot)

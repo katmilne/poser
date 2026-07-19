@@ -85,7 +85,10 @@ struct PaywallView: View {
             }
         }
         .foregroundStyle(Theme.Colors.ink)
-        .task { await premium.loadOfferings() }
+        .task {
+            Analytics.track("paywall_shown", ["context": context.rawValue])
+            await premium.loadOfferings()
+        }
         .onChange(of: premium.isUnlocked) { _, unlocked in
             if unlocked, context == .onboarding { close() }
         }

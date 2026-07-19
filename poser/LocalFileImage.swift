@@ -67,7 +67,7 @@ nonisolated final class LocalImageLoader: @unchecked Sendable {
 }
 
 private extension UIImage {
-    /// The decoded bitmap's footprint — the number that actually costs memory,
+    /// The decoded bitmap's footprint - the number that actually costs memory,
     /// as opposed to the compressed file's size.
     nonisolated var decodedByteCount: Int {
         guard let cgImage else { return 0 }

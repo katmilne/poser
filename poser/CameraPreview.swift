@@ -13,7 +13,7 @@ struct CameraPreview: UIViewRepresentable {
     let zoomOut: CGFloat
     /// Whether the camera is producing frames. The moment this turns true after a
     /// flip, the on-screen feed *is* the new camera, so it's the safe cue to
-    /// adopt the new camera's rotation — doing it earlier would rotate the
+    /// adopt the new camera's rotation - doing it earlier would rotate the
     /// outgoing feed still visible during the swap.
     let isReady: Bool
     @Binding var normalizedPhotoCrop: NormalizedCrop?
@@ -150,7 +150,7 @@ final class PreviewView: UIView {
 
     /// Called on every update with the camera's readiness. The false→true edge is
     /// the moment a (possibly just-flipped) camera starts producing frames, so
-    /// the feed on screen is now this camera — the point at which adopting its
+    /// the feed on screen is now this camera - the point at which adopting its
     /// rotation becomes safe. The follow-ups nudge the re-check in case the
     /// preview connection hasn't re-pointed at the new device yet; `ensureRotation`
     /// running from every later layout is what ultimately guarantees it lands.
@@ -167,7 +167,7 @@ final class PreviewView: UIView {
     }
 
     /// Matches the rotation coordinator to whichever camera is live and applies
-    /// its angle — but only while ready, so the outgoing feed is never re-aimed
+    /// its angle - but only while ready, so the outgoing feed is never re-aimed
     /// during a flip. Because it also runs from `configure` and `layoutSubviews`,
     /// it re-checks repeatedly after a flip and reliably lands the new lens's
     /// angle even if the preview connection re-pointed later than the ready edge.
@@ -200,7 +200,7 @@ final class PreviewView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         // The feed rect tracks a live pinch, so update it without Core Animation's
-        // implicit ~0.25s move — otherwise the feed lags behind the gesture.
+        // implicit ~0.25s move - otherwise the feed lags behind the gesture.
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         previewLayer.frame = feedRect()

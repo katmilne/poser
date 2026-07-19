@@ -148,7 +148,7 @@ final class CameraController {
         frameDelegate?.reset()
 
         // Swapping the input is the same slow AVFoundation work as the initial
-        // configuration, so it belongs on the capture queue too — on the main
+        // configuration, so it belongs on the capture queue too - on the main
         // actor it stalls the whole screen mid-flip.
         let zoom = try await onSessionQueue { [session, videoOutput] in
             guard let device = Self.cameraDevice(for: next) else { throw CameraError.unavailable }
@@ -247,9 +247,9 @@ final class CameraController {
         }
     }
 
-    /// Building the session is slow — device discovery, opening the input, and
+    /// Building the session is slow - device discovery, opening the input, and
     /// committing the configuration together cost hundreds of milliseconds on a
-    /// real phone — so none of it may happen on the main actor. It used to, and
+    /// real phone - so none of it may happen on the main actor. It used to, and
     /// that is precisely why the camera screen arrived frozen: every control was
     /// unresponsive until AVFoundation was finished. All session mutation now
     /// happens on `sessionQueue` and the main actor only awaits the outcome.

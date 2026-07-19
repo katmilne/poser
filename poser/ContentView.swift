@@ -20,6 +20,7 @@ struct ContentView: View {
             } else {
                 OnboardingView {
                     onboarded = true
+                    Analytics.track("onboarding_completed")
                 }
             }
         }
@@ -158,7 +159,7 @@ enum BundledPoseCatalog {
     /// starter (solo) needs the newest stamp. The bundled poses each get an
     /// `addedAt` taken while they are persisted one after another, and that
     /// sequential file I/O drifts the wall clock far enough that the
-    /// last-seeded starter would otherwise sort newest — reversing the strip
+    /// last-seeded starter would otherwise sort newest - reversing the strip
     /// to group → duo → solo. Stamping the trio from one shared instant,
     /// spaced a second per rank, pins them to solo → duo → group regardless of
     /// how long seeding takes or where the poses sit in `poses`.

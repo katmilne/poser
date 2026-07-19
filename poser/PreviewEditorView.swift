@@ -56,8 +56,8 @@ struct PreviewEditorView: View {
     /// The composite is laid out in points at roughly the size the editor shows
     /// it, and only then scaled up to the 1536×2048 export. Handing the renderer
     /// the pixel size directly would keep every fixed-point detail inside the
-    /// canvas — the frame's 20pt border inset, the digicam trim, sticker
-    /// shadows — at its literal size against a canvas four times wider, which
+    /// canvas - the frame's 20pt border inset, the digicam trim, sticker
+    /// shadows - at its literal size against a canvas four times wider, which
     /// pushes the frame marks so close to the edge that half of each is clipped
     /// away and the photo reads as cropped in.
     private static let exportCanvas = CGSize(width: 384, height: 384 / Theme.viewportAspect)
@@ -405,6 +405,7 @@ struct PreviewEditorView: View {
         )
         stickers.append(sticker)
         selectedStickerID = sticker.key
+        Analytics.track("decoration_added", ["type": "sticker"])
     }
 
     private func addTextSticker(_ text: String) {
@@ -412,6 +413,7 @@ struct PreviewEditorView: View {
         sticker.scale = 1
         stickers.append(sticker)
         selectedStickerID = sticker.key
+        Analytics.track("decoration_added", ["type": "text"])
     }
 
     private func addCustomSticker(_ custom: CustomStickerRecord) {
@@ -426,10 +428,11 @@ struct PreviewEditorView: View {
         )
         stickers.append(sticker)
         selectedStickerID = sticker.key
+        Analytics.track("decoration_added", ["type": "custom_sticker"])
     }
 
     /// Retires a sticker from the picker without touching the photos wearing it.
-    /// The record and its file survive so those placements keep drawing — only
+    /// The record and its file survive so those placements keep drawing - only
     /// `ownPackItems` filters on `hiddenAt`.
     private func removeCustomStickerFromPack(_ custom: CustomStickerRecord) {
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -524,7 +527,7 @@ struct PreviewEditorView: View {
 
     /// A draft has nothing behind it, so leaving is leaving it behind: ask, then
     /// throw the shot away. From the album the photo is already the user's, and
-    /// closing is just putting it down — the edits go with it.
+    /// closing is just putting it down - the edits go with it.
     @MainActor
     private func closeEditor() async {
         if isDraft {
@@ -543,6 +546,7 @@ struct PreviewEditorView: View {
         modelContext.delete(shot)
         try? modelContext.save()
         Task { await ImageStore.shared.deleteShot(shot) }
+        Analytics.track("capture_discarded")
         dismiss()
     }
 
@@ -564,6 +568,7 @@ struct PreviewEditorView: View {
         defer { isRendering = false }
         if let url = await currentExportURL() {
             sharePayload = SharePayload(url: url)
+            Analytics.track("photo_shared", ["source": "preview_editor", "decorated": isDecorated])
         }
     }
 
@@ -576,6 +581,7 @@ struct PreviewEditorView: View {
             try await PhotoLibraryService.saveImage(at: url)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             alertMessage = "Saved to Camera Roll."
+            Analytics.track("photo_saved", ["source": "preview_editor", "decorated": isDecorated])
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             alertMessage = error.localizedDescription
@@ -744,7 +750,7 @@ private enum FrameCatalog {
     /// One width for every frame pill, so the row reads as a set of equal
     /// choices rather than pills sized to their own labels. Comfortably clears
     /// the longest title at the compact button's fixed 13pt font, and acts as a
-    /// floor — a longer title would grow its pill rather than clip.
+    /// floor - a longer title would grow its pill rather than clip.
     static let pillWidth: CGFloat = 92
 }
 
@@ -776,7 +782,7 @@ private enum StickerCatalog {
     ].map { (id: $0.0, title: $0.1) }
 }
 
-/// Hand-drawn ink marks — the whole pack is stroked vector art on a clear
+/// Hand-drawn ink marks - the whole pack is stroked vector art on a clear
 /// background, so it reads the same over light and dark photos.
 private enum DoodleCatalog {
     static let all = [
@@ -927,7 +933,7 @@ private struct DoodleGlyph: View {
 private struct DoodleMark<S: Shape>: View {
     let shape: S
     var filled = false
-    /// Fraction of the frame trimmed off each edge — lets small marks such as
+    /// Fraction of the frame trimmed off each edge - lets small marks such as
     /// the dot stay small relative to the shared sticker frame.
     var inset: CGFloat = 0
 
@@ -1119,7 +1125,7 @@ private struct DoodleHeartShape: Shape {
     }
 }
 
-/// Four-point star with concave sides — the sparkle repeated across the pattern.
+/// Four-point star with concave sides - the sparkle repeated across the pattern.
 private struct DoodleSparkleShape: Shape {
     func path(in rect: CGRect) -> Path {
         let cx = rect.midX

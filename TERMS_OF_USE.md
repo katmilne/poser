@@ -15,7 +15,7 @@ Conditions also apply.
 
 Poser lets you overlay a chosen reference image ("a pose") as a translucent
 guide on the live camera viewfinder to help frame a photo, then capture a
-clean photo — with no overlay or guide baked in — using your device's camera.
+clean photo - with no overlay or guide baked in - using your device's camera.
 Poser also lets you decorate photos with frames, stickers, and text, organize
 photos and poses in an in-app album and library, and create custom cutout
 stickers from your own photos.
@@ -38,8 +38,8 @@ App, except to the extent applicable law expressly permits.
 
 ## 4. Local data storage
 
-All content you create in Poser — photos, pose references, custom stickers,
-tags, and edits — is stored locally on your device, not on any server we
+All content you create in Poser - photos, pose references, custom stickers,
+tags, and edits - is stored locally on your device, not on any server we
 operate. You are responsible for managing your device, keeping your own
 backups (for example, via iCloud or device backup), and any loss of content
 resulting from device loss, damage, or App deletion.
@@ -84,7 +84,7 @@ before the end of the current period.
 **Free trials and introductory pricing.** Where offered, a free trial or
 discounted introductory price applies only to eligible new subscribers within
 Poser's Apple subscription group, and only once across the plans in that
-group — redeeming one introductory offer (for example, the free trial) makes
+group - redeeming one introductory offer (for example, the free trial) makes
 you ineligible for the other (for example, the discounted first month), and
 vice versa. Unless cancelled before the trial or introductory period ends,
 your subscription automatically converts to a paid subscription at the full
@@ -99,7 +99,7 @@ https://apps.apple.com/account/subscriptions. Deleting the App does not
 cancel a subscription.
 
 **Refunds.** All payments are processed by Apple. Refund requests are handled
-by Apple under its own policies — we do not have the ability to issue refunds
+by Apple under its own policies - we do not have the ability to issue refunds
 directly.
 
 **Restoring purchases.** If you reinstall the App or use it on a new device
@@ -130,8 +130,8 @@ and Sentry for crash and error reporting. Each operates under its own terms:
 
 ## 9. Intellectual property
 
-Aside from Your Content, the App itself — including its design, code,
-graphics, stickers, frames, and branding — is owned by Concurrent Space or
+Aside from Your Content, the App itself - including its design, code,
+graphics, stickers, frames, and branding - is owned by Concurrent Space or
 our licensors and protected by intellectual property laws. Nothing in these
 Terms transfers any of that ownership to you beyond the limited license in
 Section 3.
@@ -176,7 +176,7 @@ misuse of the App or violation of these Terms.
 
 We may suspend or terminate your access to the App if you violate these
 Terms. You may stop using the App, and delete it, at any time. Deleting the
-App does not automatically cancel an active subscription — see Section 6.
+App does not automatically cancel an active subscription - see Section 6.
 Sections that by their nature should survive termination (including Sections
 5, 9, 11, 12, and 13) will survive.
 

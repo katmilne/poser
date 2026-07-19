@@ -28,9 +28,9 @@ enum PaywallContext: String, Identifiable {
         case .onboarding, .discover, .general:
             "Unlimited poses from Photos and unlimited custom cutout stickers. The camera stays free forever."
         case .poseLimit:
-            "Free includes \(PremiumStore.freePoseLimit) poses from Photos. Premium makes them unlimited — poses you've already added stay yours either way."
+            "Free includes \(PremiumStore.freePoseLimit) poses from Photos. Premium makes them unlimited - poses you've already added stay yours either way."
         case .stickerLimit:
-            "Free includes \(PremiumStore.freeStickerLimit) custom cutout stickers. Premium makes them unlimited — stickers you've already made stay yours either way."
+            "Free includes \(PremiumStore.freeStickerLimit) custom cutout stickers. Premium makes them unlimited - stickers you've already made stay yours either way."
         }
     }
 }
@@ -69,12 +69,12 @@ struct PaywallPlan: Identifiable {
 /// offering, falling back to offering `default`.
 ///
 /// Free tier: 3 poses from Photos, 3 custom cutout stickers. Lapse never
-/// deletes anything — records created while premium stay usable; only the
+/// deletes anything - records created while premium stay usable; only the
 /// ability to create beyond the free limits goes away.
 @MainActor
 @Observable
 final class PremiumStore {
-    /// Kept out of source control — see `Secrets.swift.example`. Until it is
+    /// Kept out of source control - see `Secrets.swift.example`. Until it is
     /// filled in, the store runs "offline": paywalls render with the fallback
     /// catalog above and purchasing is disabled.
     private static let apiKey = Secrets.revenueCatAPIKey
@@ -174,9 +174,12 @@ final class PremiumStore {
         guard let package = plan.package, !isPurchasing else { return }
         isPurchasing = true
         defer { isPurchasing = false }
+        Analytics.track("purchase_started", ["plan": plan.kind.rawValue])
         do {
             let result = try await Purchases.shared.purchase(package: package)
-            if !result.userCancelled {
+            if result.userCancelled {
+                Analytics.track("purchase_cancelled", ["plan": plan.kind.rawValue])
+            } else {
                 apply(result.customerInfo)
                 if isPremium {
                     Analytics.track("purchase_completed", ["plan": plan.kind.rawValue])
@@ -381,7 +384,7 @@ final class PremiumStore {
         case ErrorCode.paymentPendingError.rawValue:
             "This purchase is waiting for approval. Premium unlocks as soon as it's confirmed."
         case ErrorCode.productAlreadyPurchasedError.rawValue:
-            "You already own this — try Restore Purchases."
+            "You already own this - try Restore Purchases."
         default:
             "The purchase didn't go through and you haven't been charged. Please try again."
         }

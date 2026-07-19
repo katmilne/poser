@@ -7,7 +7,7 @@ import Sentry
 /// either SDK directly and stays correct whether or not either is configured.
 ///
 /// Analytics events must stay low-cardinality and content-free: feature
-/// names, booleans, counts, and fixed option values are fine — item names,
+/// names, booleans, counts, and fixed option values are fine - item names,
 /// photo/pose file paths, exact timestamps, and any other user-authored
 /// content must never be sent. Error reports follow the same rule: Sentry is
 /// configured with `sendDefaultPii = false` and no session replay, so no
@@ -17,7 +17,7 @@ enum Analytics {
     private static var aptabaseConfigured = false
 
     /// Product analytics (Aptabase) default to on; the user can opt out in
-    /// Settings. Crash/error reporting (Sentry) has no toggle — it always
+    /// Settings. Crash/error reporting (Sentry) has no toggle - it always
     /// runs once configured, matching the Privacy Policy.
     static var isOptedOut: Bool {
         get { UserDefaults.standard.bool(forKey: optOutKey) }
@@ -65,7 +65,7 @@ enum Analytics {
             options.appHangTimeoutInterval = 5
             options.enableWatchdogTerminationTracking = true
 
-            // No IP/device contact info, and no session replay — Poser's
+            // No IP/device contact info, and no session replay - Poser's
             // screens show the user's own photos, which must never leave
             // the device as part of a crash report.
             options.sendDefaultPii = false

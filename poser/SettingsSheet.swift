@@ -241,7 +241,7 @@ struct SettingsSheet: View {
                         Text("SHARE ANONYMOUS USAGE DATA")
                             .font(.system(size: 14, weight: .black, design: .rounded))
                             .tracking(0.7)
-                        Text("Helps us see which features are used. Never includes your photos, poses, or stickers. Crash reports are separate and always on — see Privacy Policy.")
+                        Text("Helps us see which features are used. Never includes your photos, poses, or stickers. Crash reports are separate and always on - see Privacy Policy.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(Theme.Colors.textDim)
                             .fixedSize(horizontal: false, vertical: true)

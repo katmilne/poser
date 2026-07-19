@@ -58,7 +58,7 @@ struct CameraView: View {
         HintStep(
             id: "album",
             title: "YOUR ALBUM",
-            message: "Every photo you take lands here — edit, save, or share it anytime."
+            message: "Every photo you take lands here - edit, save, or share it anytime."
         ),
         HintStep(
             id: "settings",
@@ -74,7 +74,7 @@ struct CameraView: View {
             // out letterbox reads as that backdrop instead of a flat colour.
             //
             // Rendered inside a flexible Color and clipped so `scaledToFill`
-            // fills the screen without reporting an oversized layout — that
+            // fills the screen without reporting an oversized layout - that
             // oversize would stretch the ZStack past the screen and push the
             // controls' edges (the top bar) off both sides.
             Color.clear
@@ -92,10 +92,10 @@ struct CameraView: View {
             // edge at 1× (the hero, immersive view). It is never boxed into a
             // sensor-shaped rect that would strand it inside bars.
             //
-            // Zooming out does not crop the lens — it shrinks the feed toward the
+            // Zooming out does not crop the lens - it shrinks the feed toward the
             // 3:4 capture rect so the whole sensor becomes visible, and the space
             // that opens up around it reveals the cloud backdrop behind (the
-            // preview view is transparent outside the feed — see
+            // preview view is transparent outside the feed - see
             // `CameraPreview.feedRect`). At 1× (`zoomOut == 0`) the feed still
             // covers the screen, so this path is identical to before and
             // `normalizedPhotoCrop` reports exactly the bracketed frame.
@@ -109,7 +109,7 @@ struct CameraView: View {
             .simultaneousGesture(cameraZoomGesture)
 
             // The capture frame and the pose guide are one and the same rect:
-            // full width, 3:4 tall, anchored below the top bar — which is exactly
+            // full width, 3:4 tall, anchored below the top bar - which is exactly
             // what ImageStore's `threeByFourPixelRect` keeps of the feed. The
             // brackets tell the user which part of the viewfinder survives the
             // crop, so this layer must stay in lockstep with that trim.
@@ -205,7 +205,7 @@ struct CameraView: View {
         }
     }
 
-    /// Shown once, the first time a new user reaches the live camera screen —
+    /// Shown once, the first time a new user reaches the live camera screen -
     /// after onboarding's permission prompt has already settled, and only if
     /// nothing else (a sheet, the shutter countdown) is already on screen.
     @MainActor
@@ -237,7 +237,7 @@ struct CameraView: View {
                 // back out unwinds that before the lens takes over again.
                 if startOut > 0 || (mag < 1 && startZoom <= camera.minimumZoomFactor + 0.001) {
                     // Gain of 2.5 so a comfortable pinch spans the whole 0…1
-                    // range in one gesture — without it, spreading the fingers
+                    // range in one gesture - without it, spreading the fingers
                     // back out could never fully return to the full-screen camera.
                     // (Optical zoom-in from here takes a fresh pinch once this
                     // one has settled back to the full screen.)
@@ -480,7 +480,7 @@ struct CameraView: View {
             // The shot lands in the context so the editor has something to
             // decorate, but it is a draft until the editor's Done keeps it:
             // closing with X deletes it again. Nothing reaches the Camera Roll
-            // from here — that is the album lightbox's job, on request.
+            // from here - that is the album lightbox's job, on request.
             modelContext.insert(record)
             try modelContext.save()
             appState.presentedShot = record
@@ -591,7 +591,7 @@ private struct CameraZoomControl: View {
     }
 
     /// On an ultra-wide device the widest lens can be pulled back digitally to
-    /// reveal the full sensor with the cloud backdrop around it — the true 0.5×
+    /// reveal the full sensor with the cloud backdrop around it - the true 0.5×
     /// the preset row exposes. Matches the `widest < 0.9` test the preset stops
     /// use so the two controls agree on which devices have that mode.
     private var hasBackdropSegment: Bool { camera.minimumZoomFactor < 0.9 }
@@ -650,8 +650,8 @@ private struct CameraZoomControl: View {
     }
 
     /// Left → right, widest to narrowest:
-    ///   • widest lens, full sensor (cloud backdrop around it) — most zoomed out
-    ///   • widest lens, filling the screen — the widest view with no bars
+    ///   • widest lens, full sensor (cloud backdrop around it) - most zoomed out
+    ///   • widest lens, filling the screen - the widest view with no bars
     ///   • each remaining optical preset, filling the screen
     /// The middle stop only exists when the widest lens is an ultra-wide (< 1×);
     /// otherwise it would just duplicate 1×.
@@ -715,7 +715,7 @@ private struct CameraViewport: View {
 /// The one definition of the capture frame: the region of the viewfinder that
 /// survives the 3:4 crop.
 ///
-/// Everything that needs this rect derives it from here — the brackets, the pose
+/// Everything that needs this rect derives it from here - the brackets, the pose
 /// guide, and the crop the photo is actually rendered with (via `PreviewView`).
 /// Keep it that way: if the on-screen frame and the crop are computed
 /// separately they will drift, and the brackets will quietly start lying about
@@ -739,7 +739,7 @@ enum CaptureFrameMetrics {
     /// Matches the top bar's horizontal padding so the frame lines up with it.
     static let sideInset: CGFloat = 16
 
-    /// In safe-area coordinates — what the SwiftUI overlay is laid out in. This
+    /// In safe-area coordinates - what the SwiftUI overlay is laid out in. This
     /// is the *only* place the frame is defined. The preview does not recompute
     /// it in its own coordinate space; it is handed the measured rect, so the
     /// brackets and the crop cannot disagree no matter what the layout does.
@@ -760,7 +760,7 @@ enum CaptureFrameMetrics {
     ///
     /// This used to go through `metadataOutputRectConverted`, which needs a live
     /// preview connection and returns nothing before one exists. The crop then
-    /// stayed at its `.full` default — silently saving the whole sensor instead
+    /// stayed at its `.full` default - silently saving the whole sensor instead
     /// of the bracketed area. Geometry cannot arrive late or fail, so the crop
     /// is always right by the first layout pass.
     ///
@@ -808,7 +808,7 @@ struct CaptureFrameRectKey: PreferenceKey {
 /// pose guide inside it.
 ///
 /// The frame is marked with corner brackets only. The area outside it is left
-/// completely untouched — never dim, tint, or otherwise darken it: the feed is
+/// completely untouched - never dim, tint, or otherwise darken it: the feed is
 /// edge-to-edge and stays that way.
 ///
 /// The pose is fixed to this rect and cannot be dragged or pinched: its position
@@ -837,7 +837,7 @@ private struct CaptureFrame: View {
                         .position(x: frame.midX, y: frame.midY)
                 }
 
-                // Two-layer stroke — a dark halo under a white line — so the
+                // Two-layer stroke - a dark halo under a white line - so the
                 // capture corners read on any scene (bright, dark, or the cloud
                 // backdrop) without relying on a blur/shadow filter.
                 CaptureFrameBrackets(arm: 26)

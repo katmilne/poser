@@ -26,7 +26,7 @@ struct GalleryView: View {
     @State private var editingShot: ShotRecord?
 
     // Each photo's page and pocket are assigned once, from its own arrival
-    // order, and never recomputed relative to photos taken afterwards — so
+    // order, and never recomputed relative to photos taken afterwards - so
     // an already-placed photo can't jump to a different pocket or page when
     // a new one is added. Fill order within a page is bottom-right,
     // bottom-left, top-right, top-left (see AlbumPage), so the 1st photo of
@@ -232,6 +232,7 @@ struct GalleryView: View {
         modelContext.delete(shot)
         try? modelContext.save()
         Task { await ImageStore.shared.deleteShot(shot) }
+        Analytics.track("photo_deleted")
         confirmsDelete = nil
         page = min(page, max(0, pages.count - 1))
     }
@@ -253,6 +254,7 @@ struct GalleryView: View {
     private func share(_ shot: ShotRecord) async {
         do {
             sharePayload = SharePayload(url: try await exportURL(for: shot))
+            Analytics.track("photo_shared", ["source": "gallery"])
         } catch {
             saveMessage = error.localizedDescription
             Analytics.captureError(error, area: "gallery_share")
@@ -265,6 +267,7 @@ struct GalleryView: View {
             try await PhotoLibraryService.saveImage(at: url)
             UINotificationFeedbackGenerator().notificationOccurred(.success)
             saveMessage = "Saved to Camera Roll."
+            Analytics.track("photo_saved", ["source": "gallery"])
         } catch {
             UINotificationFeedbackGenerator().notificationOccurred(.warning)
             saveMessage = error.localizedDescription
@@ -272,7 +275,7 @@ struct GalleryView: View {
         }
     }
 
-    /// A shot's ghost reference outlives the pose it was copied from — deleting
+    /// A shot's ghost reference outlives the pose it was copied from - deleting
     /// a user pose never touches past photos' thumbnails (see
     /// `ImageStore.shotGhostURL`). So "was this pose deleted?" isn't answered by
     /// the reference itself; it's answered by whether that pose is still in the
@@ -322,7 +325,7 @@ struct GalleryView: View {
 }
 
 private struct AlbumPage: View {
-    // Fixed pocket layout for this page — index order is grid reading order
+    // Fixed pocket layout for this page - index order is grid reading order
     // (top-left, top-right, bottom-left, bottom-right). Assigned once by
     // GalleryView.pages and never re-derived here, so a pocket's contents
     // can't shift just because a sibling page changed.
@@ -671,7 +674,7 @@ private struct LightboxLayer: View {
 }
 
 /// The reference pose thumbnail and its "use it again" action are one tap
-/// target — a single Liquid Glass rounded rectangle with the thumbnail and
+/// target - a single Liquid Glass rounded rectangle with the thumbnail and
 /// label side by side, rather than two separately-tappable pieces stacked
 /// on top of each other. Corners match the thumbnail's own radius so the
 /// whole button reads as one symmetrical shape.
@@ -709,7 +712,7 @@ private struct UseGhostButton: View {
 }
 
 /// Shown in place of `UseGhostButton` once the user pose a photo was matched
-/// against has been deleted from their collection — the ghost thumbnail
+/// against has been deleted from their collection - the ghost thumbnail
 /// itself survives (see `ImageStore.shotGhostURL`), but there is nothing left
 /// to reselect, so this reads as "nothing to use" rather than silently
 /// hiding the fact that a pose was ever involved.

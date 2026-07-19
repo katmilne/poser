@@ -130,7 +130,7 @@ actor ImageStore {
 
     /// Built-in pose sources used to be copied into Documents. They are read
     /// straight from the bundle now, so any copy left by an older version is
-    /// dead weight — roughly 42MB of it. Removing them is best-effort: a copy
+    /// dead weight - roughly 42MB of it. Removing them is best-effort: a copy
     /// that outlives its record is wasted space, never a correctness problem.
     func removeLegacyBundledSources(ids: [String]) {
         for id in ids {
@@ -389,7 +389,7 @@ actor ImageStore {
         guard let sourceFileName else { return fallbackURL }
         if let resource = Self.bundledResource(from: sourceFileName) {
             // Falling back to the display JPEG keeps reframing working even if a
-            // resource is ever renamed — a coarser source, not a broken screen.
+            // resource is ever renamed - a coarser source, not a broken screen.
             return Bundle.main.url(forResource: resource, withExtension: nil) ?? fallbackURL
         }
         return documentURL.appending(path: "overlays/sources/\(sourceFileName)")
@@ -419,11 +419,11 @@ actor ImageStore {
 
     /// `normalizedCrop` is the rect the viewfinder actually showed: at 1× the
     /// feed fills the screen and its width spills off the sides, so that unseen
-    /// overflow is discarded here — what you framed is what survives. (Zooming
+    /// overflow is discarded here - what you framed is what survives. (Zooming
     /// out shrinks the feed toward the 3:4 rect, so the crop simply widens back
     /// toward the full sensor.) `renderCroppedJPEG` then squares the result up to
     /// 3:4 for the album (see `threeByFourPixelRect`), only taking off the top
-    /// and bottom — every pixel in the saved photo is one the user saw.
+    /// and bottom - every pixel in the saved photo is one the user saw.
     private func prepareThreeByFourCapture(
         _ data: Data,
         normalizedCrop: NormalizedCrop
@@ -465,7 +465,7 @@ actor ImageStore {
     }
 
     /// Reads only the image header, so it never pays to load or decode the whole
-    /// file — which matters for the multi-megabyte bundled pose PNGs.
+    /// file - which matters for the multi-megabyte bundled pose PNGs.
     private func imageDimensions(at url: URL) throws -> (width: Int, height: Int) {
         guard
             let source = CGImageSourceCreateWithURL(
@@ -508,7 +508,7 @@ actor ImageStore {
         }
 
         // `kCGImageSourceCreateThumbnailWithTransform` has already applied the
-        // EXIF orientation, so this image is the picture as the user saw it —
+        // EXIF orientation, so this image is the picture as the user saw it -
         // and every caller states its crop in that same displayed space. No
         // rotation of the crop is needed or wanted here.
         let width = orientedImage.width
