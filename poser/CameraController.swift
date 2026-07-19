@@ -71,6 +71,8 @@ final class CameraController {
     @ObservationIgnored private var configuration: Task<Void, Error>?
     @ObservationIgnored private var activeDeviceID: String?
     @ObservationIgnored private var displayZoomMultiplier: CGFloat = 1
+    @ObservationIgnored private var captureRotationCoordinator: AVCaptureDevice.RotationCoordinator?
+    @ObservationIgnored private weak var captureRotationDevice: AVCaptureDevice?
 
     var isReady: Bool { isRunning && hasProducedFrame && !isSwitching }
     var supportsZoom: Bool { maximumZoomFactor - minimumZoomFactor > 0.01 }
@@ -207,6 +209,19 @@ final class CameraController {
 #endif
     }
 
+    /// The device-correct capture angle, matching the preview's per-camera
+    /// rotation so a saved photo is oriented the way the viewfinder showed it.
+    /// Hard-coding 90° rotated the front camera; the coordinator reports the
+    /// right angle for whichever lens is live (rebuilt when the lens changes).
+    private func captureRotationAngle(for connection: AVCaptureConnection) -> CGFloat {
+        let device = (connection.inputPorts.first { $0.mediaType == .video }?.input as? AVCaptureDeviceInput)?.device
+        if let device, device !== captureRotationDevice {
+            captureRotationDevice = device
+            captureRotationCoordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: nil)
+        }
+        return captureRotationCoordinator?.videoRotationAngleForHorizonLevelCapture ?? 90
+    }
+
     func capturePhoto() async throws -> Data {
         guard isReady else { throw CameraError.captureFailed }
         let settings = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
@@ -225,7 +240,7 @@ final class CameraController {
             }
             photoDelegate = delegate
             if let connection = photoOutput.connection(with: .video) {
-                connection.videoRotationAngle = 90
+                connection.videoRotationAngle = captureRotationAngle(for: connection)
                 connection.isVideoMirrored = facing == .front
             }
             photoOutput.capturePhoto(with: settings, delegate: delegate)

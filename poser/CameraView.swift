@@ -24,50 +24,73 @@ struct CameraView: View {
     @State private var errorMessage: String?
     @State private var referenceStripCollapsed = false
     @State private var pinchStartZoom: CGFloat?
+    @State private var pinchStartZoomOut: CGFloat?
+    /// 0 = the feed fills the whole screen (1×); 1 = it has shrunk to the 3:4
+    /// capture rect, with the cloud backdrop showing in the exposed area.
+    @State private var viewfinderZoomOut: CGFloat = 0
 
-    /// The strip's first slot is reserved for the pose currently in use, even
-    /// when it isn't a favorite: tapping its thumbnail is the only way to flip
-    /// or clear it, so it must always be reachable from the strip.
+    /// The strip's first slot is reserved for the pose most recently chosen from
+    /// the pose library, even when it isn't a favorite, so it stays reachable
+    /// while tapping strip favorites only swaps the active overlay. If that pose
+    /// is already a favorite in the strip it keeps its existing place rather than
+    /// being pulled to the front.
     private var stripOverlays: [OverlayRecord] {
         let favorites = overlays.filter(\.isFavorite)
-        guard let selected = appState.selectedGhost else { return favorites }
-        return [selected] + favorites.filter { $0.id != selected.id }
+        guard let pinned = appState.libraryPose else { return favorites }
+        if favorites.contains(where: { $0.id == pinned.id }) { return favorites }
+        return [pinned] + favorites
     }
 
     var body: some View {
         ZStack {
-            Theme.Colors.black.ignoresSafeArea()
-
-            // INVARIANT: the viewfinder is edge-to-edge — it fills the whole
-            // screen, safe areas included, and the controls float on top of it.
-            // Never box it into a sensor-shaped rect (e.g. width * 4/3 pinned
-            // below the top bar): that letterboxes the feed into black bars,
-            // which is a regression this screen has repeatedly suffered.
+            // The same cloud backdrop the album uses. It sits behind the feed
+            // and shows through wherever the feed does not reach, so the zoomed-
+            // out letterbox reads as that backdrop instead of a flat colour.
             //
-            // The preview layer is .resizeAspectFill, so the 3:4 sensor feed
-            // scales until it covers the screen's height and its width spills
-            // off the sides. `normalizedPhotoCrop` reports the sensor region
-            // behind `CaptureFrameMetrics.rect` — already 3:4, so ImageStore's
-            // trim is a no-op and the photo is exactly the bracketed frame.
+            // Rendered inside a flexible Color and clipped so `scaledToFill`
+            // fills the screen without reporting an oversized layout — that
+            // oversize would stretch the ZStack past the screen and push the
+            // controls' edges (the top bar) off both sides.
+            Color.clear
+                .overlay {
+                    Image(.cloudBackground)
+                        .resizable()
+                        .scaledToFill()
+                }
+                .clipped()
+                .overlay(Theme.Colors.bg.opacity(0.16))
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+
+            // The camera *is* the background of this screen and fills it edge to
+            // edge at 1× (the hero, immersive view). It is never boxed into a
+            // sensor-shaped rect that would strand it inside bars.
+            //
+            // Zooming out does not crop the lens — it shrinks the feed toward the
+            // 3:4 capture rect so the whole sensor becomes visible, and the space
+            // that opens up around it reveals the cloud backdrop behind (the
+            // preview view is transparent outside the feed — see
+            // `CameraPreview.feedRect`). At 1× (`zoomOut == 0`) the feed still
+            // covers the screen, so this path is identical to before and
+            // `normalizedPhotoCrop` reports exactly the bracketed frame.
             CameraViewport(
                 camera: camera,
                 captureFrameInWindow: captureFrameInWindow,
+                zoomOut: viewfinderZoomOut,
                 normalizedPhotoCrop: $normalizedCaptureCrop
             )
             .ignoresSafeArea()
             .simultaneousGesture(cameraZoomGesture)
 
             // The capture frame and the pose guide are one and the same rect:
-            // full width, 3:4 tall, centred — which is exactly what ImageStore's
-            // `threeByFourPixelRect` keeps of the screen. The brackets are what
-            // tell the user which part of the viewfinder survives the crop, so
-            // this layer must stay in lockstep with that trim.
+            // full width, 3:4 tall, anchored below the top bar — which is exactly
+            // what ImageStore's `threeByFourPixelRect` keeps of the feed. The
+            // brackets tell the user which part of the viewfinder survives the
+            // crop, so this layer must stay in lockstep with that trim.
             //
-            // Note this boxes the *guide*, never the preview: the feed stays
-            // edge-to-edge and undimmed outside the frame.
-            // Laid out in the safe area, unlike the preview beneath it: the
-            // frame is anchored to the top bar, which lives in the safe area
-            // too. `PreviewView` re-bases the same anchor for its own
+            // This boxes the *guide*, never the preview: the feed stays edge-to-
+            // edge at 1× and only shrinks toward this rect when the user zooms
+            // out. The preview re-bases this same measured rect for its own
             // full-screen coordinates.
             CaptureFrame(
                 ghost: camera.authorizationStatus == .authorized ? appState.selectedGhost : nil,
@@ -94,7 +117,7 @@ struct CameraView: View {
                 }
 
                 if !referenceStripCollapsed && camera.supportsZoom && camera.authorizationStatus == .authorized {
-                    CameraZoomControl(camera: camera)
+                    CameraZoomControl(camera: camera, viewfinderZoomOut: $viewfinderZoomOut)
                         .padding(.bottom, 10)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
@@ -149,11 +172,34 @@ struct CameraView: View {
     private var cameraZoomGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                guard camera.supportsZoom else { return }
+                let mag = value.magnification
                 if pinchStartZoom == nil { pinchStartZoom = camera.zoomFactor }
-                camera.setZoom((pinchStartZoom ?? camera.zoomFactor) * value.magnification)
+                if pinchStartZoomOut == nil { pinchStartZoomOut = viewfinderZoomOut }
+                let startZoom = pinchStartZoom ?? camera.zoomFactor
+                let startOut = pinchStartZoomOut ?? viewfinderZoomOut
+
+                // Below the lens's own minimum there is nothing left to zoom out
+                // optically, so pinching in there digitally shrinks the feed
+                // (the cloud backdrop fills the gap) instead of doing nothing. Pinching
+                // back out unwinds that before the lens takes over again.
+                if startOut > 0 || (mag < 1 && startZoom <= camera.minimumZoomFactor + 0.001) {
+                    // Gain of 2.5 so a comfortable pinch spans the whole 0…1
+                    // range in one gesture — without it, spreading the fingers
+                    // back out could never fully return to the full-screen camera.
+                    // (Optical zoom-in from here takes a fresh pinch once this
+                    // one has settled back to the full screen.)
+                    viewfinderZoomOut = max(0, min(1, startOut + (1 - mag) * 2.5))
+                } else if camera.supportsZoom {
+                    camera.setZoom(startZoom * mag)
+                }
             }
-            .onEnded { _ in pinchStartZoom = nil }
+            .onEnded { _ in
+                // Snap away any sliver of letterbox so the camera always settles
+                // back to a clean full screen.
+                if viewfinderZoomOut < 0.02 { viewfinderZoomOut = 0 }
+                pinchStartZoom = nil
+                pinchStartZoomOut = nil
+            }
     }
 
     private var cameraTopBar: some View {
@@ -222,6 +268,7 @@ struct CameraView: View {
                     accessibilityLabel: "Flip camera",
                     disabled: captureBusy || camera.isSwitching
                 ) {
+                    withAnimation(.poserGlide) { viewfinderZoomOut = 0 }
                     Task {
                         do { try await camera.switchCamera() }
                         catch { errorMessage = "Switching cameras failed. \(error.localizedDescription)" }
@@ -268,6 +315,7 @@ struct CameraView: View {
                                         } onDelete: {
                                             guard !overlay.isBuiltIn else { return }
                                             if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
+                                            if appState.libraryPose?.id == overlay.id { appState.libraryPose = nil }
                                             modelContext.delete(overlay)
                                             Task { await ImageStore.shared.deleteOverlay(overlay) }
                                         }
@@ -401,6 +449,9 @@ private struct HardwareCameraCaptureModifier: ViewModifier {
 
 private struct CameraZoomControl: View {
     let camera: CameraController
+    /// Any explicit zoom choice means "full-screen camera at this optical zoom",
+    /// so selecting one clears the digital zoom-out (and its backdrop letterbox).
+    @Binding var viewfinderZoomOut: CGFloat
     @State private var showsRange = false
 
     var body: some View {
@@ -421,34 +472,40 @@ private struct CameraZoomControl: View {
                             .accessibilityLabel("Zoom")
                             .accessibilityValue(Self.accessibilityLabel(for: camera.zoomFactor))
 
-                        Button("Done") { showsRange = false }
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(Theme.Colors.ink)
+                        Button { showsRange = false } label: {
+                            Text("Done")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(Theme.Colors.ink)
+                                .frame(minWidth: 44, minHeight: 44)
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(PressScaleButtonStyle())
                     }
                     .padding(.horizontal, 14)
                     .frame(height: 44)
                     .transition(.opacity)
                 } else {
                     HStack(spacing: 4) {
-                        ForEach(camera.zoomPresetFactors, id: \.self) { factor in
+                        ForEach(zoomStops) { stop in
                             Button {
-                                camera.setZoom(factor, smoothly: true)
+                                withAnimation(.poserGlide) { viewfinderZoomOut = stop.zoomOut }
+                                camera.setZoom(stop.lens, smoothly: true)
                             } label: {
-                                Text(Self.label(for: factor))
+                                Text(stop.label)
                                     .font(.system(size: 13, weight: .black, design: .rounded))
                                     .monospacedDigit()
                                     .foregroundStyle(Theme.Colors.ink)
                                     .frame(width: 42, height: 42)
                                     .background {
-                                        if isSelected(factor) {
+                                        if isSelected(stop) {
                                             Circle().fill(Theme.Colors.sky)
                                         }
                                     }
                                     .contentShape(.circle)
                             }
                             .buttonStyle(PressScaleButtonStyle())
-                            .accessibilityLabel("Zoom \(Self.accessibilityLabel(for: factor))")
-                            .accessibilityAddTraits(isSelected(factor) ? .isSelected : [])
+                            .accessibilityLabel("Zoom \(stop.label)")
+                            .accessibilityAddTraits(isSelected(stop) ? .isSelected : [])
                         }
 
                         Button { showsRange = true } label: {
@@ -471,25 +528,94 @@ private struct CameraZoomControl: View {
         .accessibilityElement(children: .contain)
     }
 
+    /// On an ultra-wide device the widest lens can be pulled back digitally to
+    /// reveal the full sensor with the cloud backdrop around it — the true 0.5×
+    /// the preset row exposes. Matches the `widest < 0.9` test the preset stops
+    /// use so the two controls agree on which devices have that mode.
+    private var hasBackdropSegment: Bool { camera.minimumZoomFactor < 0.9 }
+
+    /// Fraction of the slider track reserved, at the very bottom, for that
+    /// pull-back to the full sensor. Zero on devices without an ultra-wide.
+    private var backdropFraction: Double { hasBackdropSegment ? 0.16 : 0 }
+
+    /// The slider is a continuous version of the preset row. Its bottom
+    /// `backdropFraction` of travel holds the widest lens and pulls the feed back
+    /// to the full sensor (`viewfinderZoomOut` 0→1), so the slider's 0.5× lands on
+    /// the *same* framing as the 0.5× preset instead of the screen-filling crop of
+    /// the widest lens. The remaining travel is the optical range, filling the
+    /// screen. The two segments meet at the widest lens with no jump.
     private var zoomProgress: Binding<Double> {
         Binding(
             get: {
                 let minimum = max(Double(camera.minimumZoomFactor), 0.01)
                 let maximum = max(Double(camera.maximumZoomFactor), minimum)
-                guard maximum > minimum else { return 0 }
-                return log(Double(camera.zoomFactor) / minimum) / log(maximum / minimum)
+                let backdrop = backdropFraction
+                if backdrop > 0 && viewfinderZoomOut > 0 {
+                    return (1 - Double(viewfinderZoomOut)) * backdrop
+                }
+                guard maximum > minimum else { return backdrop }
+                let optical = log(Double(camera.zoomFactor) / minimum) / log(maximum / minimum)
+                return backdrop + optical * (1 - backdrop)
             },
             set: { progress in
                 let minimum = max(Double(camera.minimumZoomFactor), 0.01)
                 let maximum = max(Double(camera.maximumZoomFactor), minimum)
-                let factor = minimum * pow(maximum / minimum, progress)
+                let backdrop = backdropFraction
+                if backdrop > 0 && progress < backdrop {
+                    let t = progress / backdrop
+                    viewfinderZoomOut = CGFloat(1 - t)
+                    camera.setZoom(camera.minimumZoomFactor)
+                    return
+                }
+                if viewfinderZoomOut != 0 { viewfinderZoomOut = 0 }
+                guard maximum > minimum else { return }
+                let optical = (progress - backdrop) / (1 - backdrop)
+                let factor = minimum * pow(maximum / minimum, optical)
                 camera.setZoom(CGFloat(factor))
             }
         )
     }
 
-    private func isSelected(_ factor: CGFloat) -> Bool {
-        abs(camera.zoomFactor - factor) < 0.05
+    /// One tappable zoom pill. Beyond an optical `lens` it also carries a
+    /// `zoomOut`, so a single lens can appear twice: once pulled all the way
+    /// back to the full sensor (cloud backdrop around it) and once filling the
+    /// screen.
+    private struct ZoomStop: Identifiable {
+        let id: Int
+        let label: String
+        let lens: CGFloat
+        let zoomOut: CGFloat
+    }
+
+    /// Left → right, widest to narrowest:
+    ///   • widest lens, full sensor (cloud backdrop around it) — most zoomed out
+    ///   • widest lens, filling the screen — the widest view with no bars
+    ///   • each remaining optical preset, filling the screen
+    /// The middle stop only exists when the widest lens is an ultra-wide (< 1×);
+    /// otherwise it would just duplicate 1×.
+    private var zoomStops: [ZoomStop] {
+        let presets = camera.zoomPresetFactors
+        guard let widest = presets.first else { return [] }
+        var stops: [ZoomStop] = []
+        if widest < 0.9 {
+            stops.append(ZoomStop(id: 0, label: Self.label(for: widest), lens: widest, zoomOut: 1))
+            stops.append(ZoomStop(id: 1, label: Self.label(for: 0.7), lens: widest, zoomOut: 0))
+        } else {
+            stops.append(ZoomStop(id: 0, label: Self.label(for: widest), lens: widest, zoomOut: 0))
+        }
+        for (index, factor) in presets.enumerated() where factor != widest {
+            stops.append(ZoomStop(id: 100 + index, label: Self.label(for: factor), lens: factor, zoomOut: 0))
+        }
+        return stops
+    }
+
+    private func isSelected(_ stop: ZoomStop) -> Bool {
+        // The pulled-back (backdrop) stop owns the zoomed-out state; fill stops
+        // light up only while the feed is filling the screen at their lens.
+        if stop.zoomOut > 0.5 {
+            return viewfinderZoomOut > 0.5
+        }
+        return viewfinderZoomOut < 0.5 && abs(camera.zoomFactor - stop.lens) < 0.05
     }
 
     private static func label(for factor: CGFloat) -> String {
@@ -510,12 +636,15 @@ private struct CameraZoomControl: View {
 private struct CameraViewport: View {
     let camera: CameraController
     let captureFrameInWindow: CGRect
+    let zoomOut: CGFloat
     @Binding var normalizedPhotoCrop: NormalizedCrop?
 
     var body: some View {
         CameraPreview(
             session: camera.session,
             captureFrameInWindow: captureFrameInWindow,
+            zoomOut: zoomOut,
+            isReady: camera.isReady,
             normalizedPhotoCrop: $normalizedPhotoCrop
         )
     }
@@ -543,17 +672,22 @@ enum CaptureFrameMetrics {
     /// every screen.
     static let dropBelowSafeAreaTop = topBarPadding + topBarHeight + gapBelowTopBar
 
+    /// Left/right breathing room so the corner brackets read as a frame inside
+    /// the screen instead of tucking under the rounded corners at the very edge.
+    /// Matches the top bar's horizontal padding so the frame lines up with it.
+    static let sideInset: CGFloat = 16
+
     /// In safe-area coordinates — what the SwiftUI overlay is laid out in. This
     /// is the *only* place the frame is defined. The preview does not recompute
     /// it in its own coordinate space; it is handed the measured rect, so the
     /// brackets and the crop cannot disagree no matter what the layout does.
     static func rect(inSafeArea size: CGSize) -> CGRect {
-        let width = size.width
+        let width = max(0, size.width - sideInset * 2)
         let height = min(width * 4 / 3, size.height)
         // Never let the frame hang off the bottom on a short screen; it gives up
         // the gap under the bar before it gives up being fully visible.
         let y = min(max(0, dropBelowSafeAreaTop), size.height - height)
-        return CGRect(x: 0, y: y, width: width, height: height)
+        return CGRect(x: sideInset, y: y, width: width, height: height)
     }
 
     /// The capture frame as a fraction of the *photo* rather than the screen.
@@ -641,8 +775,15 @@ private struct CaptureFrame: View {
                         .position(x: frame.midX, y: frame.midY)
                 }
 
-                CaptureFrameBrackets()
-                    .stroke(.white.opacity(0.28), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                // Two-layer stroke — a dark halo under a white line — so the
+                // capture corners read on any scene (bright, dark, or the cloud
+                // backdrop) without relying on a blur/shadow filter.
+                CaptureFrameBrackets(arm: 26)
+                    .stroke(.black.opacity(0.5), style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                    .frame(width: frame.width, height: frame.height)
+                    .position(x: frame.midX, y: frame.midY)
+                CaptureFrameBrackets(arm: 26)
+                    .stroke(.white, style: StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                     .frame(width: frame.width, height: frame.height)
                     .position(x: frame.midX, y: frame.midY)
             }
@@ -660,8 +801,9 @@ private struct CaptureFrame: View {
 }
 
 /// Corner brackets, inset so the strokes sit just inside the capture frame.
-/// Kept deliberately faint and short — enough to read the crop when looked for,
-/// not enough to compete with the subject.
+/// Bright white with a soft shadow so the capture area stays readable over both
+/// a light scene (or the cloud backdrop) and a dark one, short enough not to
+/// box the subject in.
 private struct CaptureFrameBrackets: Shape {
     var arm: CGFloat = 16
     var inset: CGFloat = 1

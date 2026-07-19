@@ -5,6 +5,11 @@ import Observation
 @Observable
 final class AppState {
     var selectedGhost: OverlayRecord?
+    /// The pose most recently chosen from the pose library. It owns the strip's
+    /// reserved first slot and only changes when a new pose is picked from that
+    /// page — tapping strip favorites swaps the active `selectedGhost` but leaves
+    /// this untouched.
+    var libraryPose: OverlayRecord?
     var ghostFlipped = false
     var ghostOpacity = 0.40
     var presentedShot: ShotRecord?
@@ -14,6 +19,7 @@ final class AppState {
 
     func selectGhost(_ overlay: OverlayRecord) {
         selectedGhost = overlay
+        libraryPose = overlay
         ghostFlipped = false
         overlay.lastUsedAt = .now
     }

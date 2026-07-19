@@ -114,7 +114,7 @@ struct StickerMakerView: View {
                         }
                     } else if camera.authorizationStatus == .authorized,
                               camera.configurationErrorMessage == nil {
-                        CameraPreview(session: camera.session)
+                        CameraPreview(session: camera.session, isReady: camera.isReady)
                     } else {
                         VStack(spacing: 12) {
                             Image(systemName: "person.crop.rectangle")

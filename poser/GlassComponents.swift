@@ -145,7 +145,7 @@ struct GhostOpacitySlider: View {
     var body: some View {
         Slider(value: $opacity, in: 0.15...0.75)
             .controlSize(.small)
-            .tint(Theme.Colors.ink)
+            .tint(Theme.Colors.sky)
             .accessibilityLabel("Ghost opacity")
             .accessibilityValue("\(Int(opacity * 100)) percent")
             .sensoryFeedback(.selection, trigger: opacity >= 0.40)

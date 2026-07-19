@@ -64,6 +64,7 @@ struct PoseLibraryView: View {
                                 } onDelete: {
                                     guard !overlay.isBuiltIn else { return }
                                     if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
+                                    if appState.libraryPose?.id == overlay.id { appState.libraryPose = nil }
                                     modelContext.delete(overlay)
                                     Task { await ImageStore.shared.deleteOverlay(overlay) }
                                 }

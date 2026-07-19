@@ -410,13 +410,13 @@ actor ImageStore {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
 
-    /// `normalizedCrop` is the rect the viewfinder actually showed: the preview
-    /// is aspect-fill, so the sensor's width spills off the sides of the screen
-    /// and that unseen overflow is discarded here — what you framed is what
-    /// survives. `renderCroppedJPEG` then squares the result up to 3:4 for the
-    /// album (see `threeByFourPixelRect`). The screen slice is taller than 3:4,
-    /// so that step only takes off the top and bottom and never has to give the
-    /// sides back — every pixel in the saved photo is one the user saw.
+    /// `normalizedCrop` is the rect the viewfinder actually showed: at 1× the
+    /// feed fills the screen and its width spills off the sides, so that unseen
+    /// overflow is discarded here — what you framed is what survives. (Zooming
+    /// out shrinks the feed toward the 3:4 rect, so the crop simply widens back
+    /// toward the full sensor.) `renderCroppedJPEG` then squares the result up to
+    /// 3:4 for the album (see `threeByFourPixelRect`), only taking off the top
+    /// and bottom — every pixel in the saved photo is one the user saw.
     private func prepareThreeByFourCapture(
         _ data: Data,
         normalizedCrop: NormalizedCrop
