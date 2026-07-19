@@ -39,7 +39,7 @@ struct ContentView: View {
             SettingsSheet()
         }
         .fullScreenCover(item: $appState.presentedShot) { shot in
-            PreviewEditorView(shot: shot)
+            CaptureReviewView(shot: shot)
         }
         .sheet(isPresented: $showsPremiumNudge) {
             PaywallView(context: .discover)
