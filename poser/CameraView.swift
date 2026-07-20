@@ -40,11 +40,12 @@ struct CameraView: View {
     @AppStorage("stripFavoriteOrder") private var stripFavoriteOrderRaw = ""
     @State private var draggingPoseID: String?
     @State private var dragTranslation: CGFloat = 0
-    /// Favourite ids in their live order while a hold-and-drag is in progress,
-    /// empty at rest. Kept separate from the saved order so an interrupted drag
-    /// costs nothing and the strip re-derives itself from storage.
-    @State private var dragOrder: [String] = []
+    /// Where the lifted pose started and where it would land if dropped now. The
+    /// strip's actual order does not change until the finger lifts: a drag only
+    /// moves poses visually, by `dragOffset(for:)`, so the lifted one can sit on
+    /// the raw finger translation with nothing to cancel out.
     @State private var dragStartIndex = 0
+    @State private var dragTargetIndex = 0
 
     /// The strip's first slot is reserved for the pose most recently chosen from
     /// the pose library, even when it isn't a favorite, so it stays reachable
@@ -59,7 +60,7 @@ struct CameraView: View {
     /// leaves premium poses favourited, and they have to leave the strip
     /// without being unfavourited, so they come back if the user resubscribes.
     private var stripOverlays: [OverlayRecord] {
-        let favorites = liveFavorites
+        let favorites = orderedFavorites
         guard let pinned = appState.libraryPose, !premium.isLocked(pinned) else { return favorites }
         if favorites.contains(where: { $0.id == pinned.id }) { return favorites }
         return [pinned] + favorites
@@ -82,17 +83,6 @@ struct CameraView: View {
             .filter { rank[$0.id] != nil }
             .sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
         return favorites.filter { rank[$0.id] == nil } + ranked
-    }
-
-    /// `orderedFavorites`, overridden by the in-flight drag arrangement so the
-    /// strip shifts under the finger. Falls back to the stored order if the two
-    /// ever disagree on membership - a pose deleted mid-drag, say.
-    private var liveFavorites: [OverlayRecord] {
-        let favorites = orderedFavorites
-        guard !dragOrder.isEmpty else { return favorites }
-        let byID = Dictionary(favorites.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let live = dragOrder.compactMap { byID[$0] }
-        return live.count == favorites.count ? live : favorites
     }
 
     private static let hintSteps: [HintStep] = [
@@ -482,48 +472,67 @@ struct CameraView: View {
         )
     }
 
-    /// How far the lifted pose sits from the slot it currently occupies. The
-    /// slot moves out from under it every time the arrangement changes, so the
-    /// slots it has already travelled past are subtracted back out and the
-    /// thumbnail stays pinned to the finger.
+    /// Where a pose is drawn relative to the slot it still occupies. The lifted
+    /// one rides the finger exactly. The ones between its start slot and the
+    /// slot it would land in step aside by one, opening the gap it will drop
+    /// into; everything outside that span holds still.
     private func dragOffset(for overlay: OverlayRecord) -> CGFloat {
-        guard draggingPoseID == overlay.id,
-              let current = dragOrder.firstIndex(of: overlay.id) else { return 0 }
-        return dragTranslation - CGFloat(current - dragStartIndex) * PoseStripMetrics.stride
+        guard let draggingPoseID else { return 0 }
+        if draggingPoseID == overlay.id { return dragTranslation }
+        guard dragTargetIndex != dragStartIndex,
+              let index = orderedFavorites.firstIndex(where: { $0.id == overlay.id })
+        else { return 0 }
+        let displaced = dragTargetIndex > dragStartIndex
+            ? (dragStartIndex + 1)...dragTargetIndex
+            : dragTargetIndex...(dragStartIndex - 1)
+        guard displaced.contains(index) else { return 0 }
+        return dragTargetIndex > dragStartIndex ? -PoseStripMetrics.stride : PoseStripMetrics.stride
     }
 
     private func beginReorder(_ overlay: OverlayRecord) {
-        dragOrder = orderedFavorites.map(\.id)
-        dragStartIndex = dragOrder.firstIndex(of: overlay.id) ?? 0
+        dragStartIndex = orderedFavorites.firstIndex(where: { $0.id == overlay.id }) ?? 0
+        dragTargetIndex = dragStartIndex
         dragTranslation = 0
         draggingPoseID = overlay.id
     }
 
     private func updateReorder(_ overlay: OverlayRecord, translation: CGFloat) {
-        guard draggingPoseID == overlay.id,
-              let current = dragOrder.firstIndex(of: overlay.id) else { return }
+        guard draggingPoseID == overlay.id else { return }
         dragTranslation = translation
-        let slots = Int((translation / PoseStripMetrics.stride).rounded())
-        let target = min(max(dragStartIndex + slots, 0), dragOrder.count - 1)
-        guard target != current else { return }
-        withAnimation(.poserGlide) {
-            dragOrder.remove(at: current)
-            dragOrder.insert(overlay.id, at: target)
-        }
+        // How far the pose has been carried past the slot it would currently
+        // land in, in slots. Measuring from that slot rather than the one the
+        // drag started in is what makes the threshold a dead zone: claiming a
+        // slot leaves this at a fraction well inside the zone, so a finger
+        // resting on a boundary cannot flip the landing slot back and forth.
+        let slotsFromTarget =
+            translation / PoseStripMetrics.stride - CGFloat(dragTargetIndex - dragStartIndex)
+        guard abs(slotsFromTarget) > PoseStripMetrics.swapThreshold else { return }
+        let steps = Int(slotsFromTarget.rounded())
+        let target = min(max(dragTargetIndex + steps, 0), orderedFavorites.count - 1)
+        guard target != dragTargetIndex else { return }
+        withAnimation(.poserGlide) { dragTargetIndex = target }
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
     }
 
     /// Commits the arrangement, storing only the ids that are favourites right
     /// now. A pose that leaves the strip loses its rank and returns to the front
     /// if it is favourited again, which is where new favourites go anyway.
+    ///
+    /// This is the only point at which the strip's order actually changes. The
+    /// saved order and the zeroed translation land in one animation, so the
+    /// lifted pose glides from the finger into its slot as the gap closes.
     private func endReorder() {
-        if !dragOrder.isEmpty, dragOrder != savedFavoriteOrder {
-            stripFavoriteOrderRaw = dragOrder.joined(separator: "\n")
+        guard let id = draggingPoseID else { return }
+        var order = orderedFavorites.map(\.id)
+        if let current = order.firstIndex(of: id), current != dragTargetIndex {
+            order.remove(at: current)
+            order.insert(id, at: min(dragTargetIndex, order.count))
         }
         draggingPoseID = nil
         withAnimation(.poserGlide) {
+            if order != savedFavoriteOrder { stripFavoriteOrderRaw = order.joined(separator: "\n") }
             dragTranslation = 0
-            dragOrder = []
+            dragTargetIndex = dragStartIndex
         }
     }
 
@@ -1042,6 +1051,11 @@ enum PoseStripMetrics {
     static let thumbHeight: CGFloat = 72
     static let spacing: CGFloat = 8
     static var stride: CGFloat { thumbWidth + spacing }
+    /// How far past a neighbour, in slots, a lifted pose must travel before it
+    /// takes that slot. Anything above the half-slot line the swap would
+    /// otherwise sit on buys hysteresis: after a swap the pose is 1 - this from
+    /// the line it just crossed, so it takes a deliberate move to cross back.
+    static let swapThreshold: CGFloat = 0.65
 }
 
 /// Everything a strip thumbnail needs to be held and dragged into a new
@@ -1065,40 +1079,60 @@ private struct PoseThumbnail: View {
 
     private var dragging: Bool { reorder?.dragging == true }
 
+    // Deliberately not a `Button`. A Button's own gesture claims the touch
+    // before any `.gesture` attached to it gets a look in, so the hold never
+    // recognized and the thumbnail could only ever be tapped - which is also
+    // why the old delete context menu never appeared here. Tap and hold are
+    // both driven explicitly so this view decides which one wins.
     var body: some View {
-        Button(action: action) {
-            LocalFileImage(
-                url: ImageStore.shared.overlayURL(overlay),
-                contentMode: .fit,
-                maxPixel: 220
-            )
-            .scaleEffect(x: flipped ? -1 : 1, y: 1)
-            .frame(width: PoseStripMetrics.thumbWidth, height: PoseStripMetrics.thumbHeight)
-            .background(Theme.Colors.black.opacity(0.16))
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(
-                        selected ? Color.white : Theme.Colors.glassEdge,
-                        lineWidth: selected ? 2 : 1
-                    )
-            }
+        LocalFileImage(
+            url: ImageStore.shared.overlayURL(overlay),
+            contentMode: .fit,
+            maxPixel: 220
+        )
+        .scaleEffect(x: flipped ? -1 : 1, y: 1)
+        .frame(width: PoseStripMetrics.thumbWidth, height: PoseStripMetrics.thumbHeight)
+        .background(Theme.Colors.black.opacity(0.16))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(
+                    selected ? Color.white : Theme.Colors.glassEdge,
+                    lineWidth: selected ? 2 : 1
+                )
         }
-        .buttonStyle(PressScaleButtonStyle())
+        // The pose art rarely fills its box, so without this the transparent
+        // corners are dead to both gestures.
+        .contentShape(.rect)
         // The lift: the held pose grows out of the row and casts a shadow so it
         // reads as picked up off the strip rather than sliding along it.
         .scaleEffect(dragging ? 1.12 : 1)
         .shadow(color: Theme.Colors.black.opacity(dragging ? 0.34 : 0), radius: 12, y: 6)
         .offset(x: reorder?.offset ?? 0)
         .animation(.poserGlide, value: dragging)
+        .onTapGesture(perform: action)
         .gesture(holdGesture)
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAddTraits(selected ? .isSelected : [])
         .accessibilityLabel(selected ? "Selected pose" : "Pose")
         .accessibilityHint(reorder == nil ? "Tap to select, then flip" : "Tap to select, then flip. Hold and drag to rearrange")
+        .accessibilityAction(.default, action)
         .accessibilityActions {
             if let reorder {
                 Button("Move left") { _ = reorder.onNudge(-1) }
                 Button("Move right") { _ = reorder.onNudge(1) }
             }
+        }
+        .sensoryFeedback(.selection, trigger: selected)
+        // While lifted, this thumbnail is pinned to the finger and nothing about
+        // it may animate. Its slot slides out from under it on every swap and
+        // `offset` subtracts exactly that much back out; let the reorder's
+        // animation reach here and the two land a third of a second apart, so
+        // the pose lurches a full slot and slides back. The other thumbnails,
+        // which have no offset to cancel, keep the glide.
+        .transaction { transaction in
+            if dragging { transaction.animation = nil }
         }
     }
 
