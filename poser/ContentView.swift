@@ -175,7 +175,7 @@ enum BundledPoseCatalog {
         )
     }
 
-    /// Version 12 retags 16 poses (vibe and framing only - no pose added,
+    /// Version 12 retags 18 poses (vibe and framing only - no pose added,
     /// removed, or moved between tiers), which reaches existing installs
     /// because the seed loop refreshes `record.tags` on every version bump.
     /// Existing records keep their favourites and framing - the seed loop only
@@ -338,7 +338,7 @@ enum BundledPoseCatalog {
         optimizedPose("overhead-toast-duo", people: "duo", genders: ["m"], vibe: "cute", framing: ["overhead"]),
         premiumPose("street-steps-duo", people: "duo", genders: ["m"], vibe: "cool"),
         premiumPose("record-store-duo", people: "duo", genders: ["m"], vibe: "cool"),
-        optimizedPose("hooded-night-duo", people: "duo", vibe: "cute", framing: ["hidden-face", "overhead"]),
+        optimizedPose("hooded-night-duo", people: "duo", vibe: "cute", framing: ["hidden-face", "overhead", "selfie"]),
         premiumPose("cat-cafe-selfie", people: "duo", vibe: "cute", framing: ["low", "selfie"]),
         premiumPose("crosswalk-overhead-duo", people: "duo", vibe: "cool", framing: ["hidden-face", "overhead", "selfie"]),
         premiumPose("cafe-steps-duo", people: "duo", vibe: "cool"),
