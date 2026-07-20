@@ -33,6 +33,18 @@ struct CameraView: View {
     /// 0 = the feed fills the whole screen (1×); 1 = it has shrunk to the 3:4
     /// capture rect, with the cloud backdrop showing in the exposed area.
     @State private var viewfinderZoomOut: CGFloat = 0
+    /// Favourite pose ids in the order the user last dragged them into, newline
+    /// separated because `@AppStorage` has no array form and pose ids never
+    /// contain a newline. Ids that are no longer favourites are dropped on the
+    /// next reorder rather than pruned eagerly - an unknown id ranks nothing.
+    @AppStorage("stripFavoriteOrder") private var stripFavoriteOrderRaw = ""
+    @State private var draggingPoseID: String?
+    @State private var dragTranslation: CGFloat = 0
+    /// Favourite ids in their live order while a hold-and-drag is in progress,
+    /// empty at rest. Kept separate from the saved order so an interrupted drag
+    /// costs nothing and the strip re-derives itself from storage.
+    @State private var dragOrder: [String] = []
+    @State private var dragStartIndex = 0
 
     /// The strip's first slot is reserved for the pose most recently chosen from
     /// the pose library, even when it isn't a favorite, so it stays reachable
@@ -47,10 +59,40 @@ struct CameraView: View {
     /// leaves premium poses favourited, and they have to leave the strip
     /// without being unfavourited, so they come back if the user resubscribes.
     private var stripOverlays: [OverlayRecord] {
-        let favorites = overlays.filter { $0.isFavorite && !premium.isLocked($0) }
+        let favorites = liveFavorites
         guard let pinned = appState.libraryPose, !premium.isLocked(pinned) else { return favorites }
         if favorites.contains(where: { $0.id == pinned.id }) { return favorites }
         return [pinned] + favorites
+    }
+
+    private var savedFavoriteOrder: [String] {
+        stripFavoriteOrderRaw.isEmpty ? [] : stripFavoriteOrderRaw.components(separatedBy: "\n")
+    }
+
+    /// Favourites in the order the strip shows them: the arrangement the user
+    /// dragged them into, with anything favourited since that drag kept at the
+    /// front, which is where a new favourite has always appeared. Before the
+    /// first ever reorder nothing is ranked, so this is exactly the query's
+    /// newest-first order.
+    private var orderedFavorites: [OverlayRecord] {
+        let favorites = overlays.filter { $0.isFavorite && !premium.isLocked($0) }
+        var rank: [String: Int] = [:]
+        for (index, id) in savedFavoriteOrder.enumerated() { rank[id] = index }
+        let ranked = favorites
+            .filter { rank[$0.id] != nil }
+            .sorted { rank[$0.id, default: 0] < rank[$1.id, default: 0] }
+        return favorites.filter { rank[$0.id] == nil } + ranked
+    }
+
+    /// `orderedFavorites`, overridden by the in-flight drag arrangement so the
+    /// strip shifts under the finger. Falls back to the stored order if the two
+    /// ever disagree on membership - a pose deleted mid-drag, say.
+    private var liveFavorites: [OverlayRecord] {
+        let favorites = orderedFavorites
+        guard !dragOrder.isEmpty else { return favorites }
+        let byID = Dictionary(favorites.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let live = dragOrder.compactMap { byID[$0] }
+        return live.count == favorites.count ? live : favorites
     }
 
     private static let hintSteps: [HintStep] = [
@@ -382,12 +424,17 @@ struct CameraView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
                             ScrollView(.horizontal) {
-                                HStack(spacing: 8) {
+                                HStack(spacing: PoseStripMetrics.spacing) {
                                     ForEach(stripOverlays) { overlay in
                                         PoseThumbnail(
                                             overlay: overlay,
                                             selected: appState.usableGhost?.id == overlay.id,
-                                            flipped: appState.usableGhost?.id == overlay.id && appState.ghostFlipped
+                                            flipped: appState.usableGhost?.id == overlay.id && appState.ghostFlipped,
+                                            // Only favourites reorder. The
+                                            // reserved most-recent slot is
+                                            // positional by definition, so its
+                                            // pose has nowhere to be dragged to.
+                                            reorder: overlay.isFavorite ? reorder(for: overlay) : nil
                                         ) {
                                             // The strip already filters locked
                                             // poses out, so this is the backstop
@@ -400,16 +447,15 @@ struct CameraView: View {
                                                 return
                                             }
                                             try? modelContext.save()
-                                        } onDelete: {
-                                            guard !overlay.isBuiltIn else { return }
-                                            appState.forgetPose(id: overlay.id)
-                                            modelContext.delete(overlay)
-                                            Task { await ImageStore.shared.deleteOverlay(overlay) }
                                         }
+                                        .zIndex(draggingPoseID == overlay.id ? 1 : 0)
                                     }
                                 }
                             }
                             .scrollIndicators(.hidden)
+                            // A lifted pose owns the horizontal axis; without
+                            // this the strip scrolls out from under the drag.
+                            .scrollDisabled(draggingPoseID != nil)
                         }
                         GlassIconButton(symbol: "chevron.down", accessibilityLabel: "Hide poses", size: 40) {
                             withAnimation(.poserGlide) { referenceStripCollapsed = true }
@@ -423,6 +469,76 @@ struct CameraView: View {
             }
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
+    }
+
+    private func reorder(for overlay: OverlayRecord) -> PoseReorder {
+        PoseReorder(
+            dragging: draggingPoseID == overlay.id,
+            offset: dragOffset(for: overlay),
+            onBegin: { beginReorder(overlay) },
+            onChange: { updateReorder(overlay, translation: $0) },
+            onEnd: { endReorder() },
+            onNudge: { nudgeFavorite(overlay, by: $0) }
+        )
+    }
+
+    /// How far the lifted pose sits from the slot it currently occupies. The
+    /// slot moves out from under it every time the arrangement changes, so the
+    /// slots it has already travelled past are subtracted back out and the
+    /// thumbnail stays pinned to the finger.
+    private func dragOffset(for overlay: OverlayRecord) -> CGFloat {
+        guard draggingPoseID == overlay.id,
+              let current = dragOrder.firstIndex(of: overlay.id) else { return 0 }
+        return dragTranslation - CGFloat(current - dragStartIndex) * PoseStripMetrics.stride
+    }
+
+    private func beginReorder(_ overlay: OverlayRecord) {
+        dragOrder = orderedFavorites.map(\.id)
+        dragStartIndex = dragOrder.firstIndex(of: overlay.id) ?? 0
+        dragTranslation = 0
+        draggingPoseID = overlay.id
+    }
+
+    private func updateReorder(_ overlay: OverlayRecord, translation: CGFloat) {
+        guard draggingPoseID == overlay.id,
+              let current = dragOrder.firstIndex(of: overlay.id) else { return }
+        dragTranslation = translation
+        let slots = Int((translation / PoseStripMetrics.stride).rounded())
+        let target = min(max(dragStartIndex + slots, 0), dragOrder.count - 1)
+        guard target != current else { return }
+        withAnimation(.poserGlide) {
+            dragOrder.remove(at: current)
+            dragOrder.insert(overlay.id, at: target)
+        }
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+    }
+
+    /// Commits the arrangement, storing only the ids that are favourites right
+    /// now. A pose that leaves the strip loses its rank and returns to the front
+    /// if it is favourited again, which is where new favourites go anyway.
+    private func endReorder() {
+        if !dragOrder.isEmpty, dragOrder != savedFavoriteOrder {
+            stripFavoriteOrderRaw = dragOrder.joined(separator: "\n")
+        }
+        draggingPoseID = nil
+        withAnimation(.poserGlide) {
+            dragTranslation = 0
+            dragOrder = []
+        }
+    }
+
+    /// The VoiceOver route to the same rearrangement, since a drag is not
+    /// reachable by anyone navigating the strip by rotor.
+    @discardableResult
+    private func nudgeFavorite(_ overlay: OverlayRecord, by delta: Int) -> Bool {
+        var order = orderedFavorites.map(\.id)
+        guard let current = order.firstIndex(of: overlay.id) else { return false }
+        let target = current + delta
+        guard order.indices.contains(target) else { return false }
+        order.remove(at: current)
+        order.insert(overlay.id, at: target)
+        withAnimation(.poserGlide) { stripFavoriteOrderRaw = order.joined(separator: "\n") }
+        return true
     }
 
     private var cameraPermissionCard: some View {
@@ -918,31 +1034,46 @@ private struct CaptureFrameBrackets: Shape {
     }
 }
 
+/// Layout the strip and its thumbnails have to agree on: a drag is turned into
+/// a slot count by dividing the finger's travel by one thumbnail plus one gap,
+/// so the two numbers cannot drift apart.
+enum PoseStripMetrics {
+    static let thumbWidth: CGFloat = 54
+    static let thumbHeight: CGFloat = 72
+    static let spacing: CGFloat = 8
+    static var stride: CGFloat { thumbWidth + spacing }
+}
+
+/// Everything a strip thumbnail needs to be held and dragged into a new
+/// position. Nil for the reserved most-recent slot, which never moves.
+struct PoseReorder {
+    let dragging: Bool
+    let offset: CGFloat
+    let onBegin: () -> Void
+    let onChange: (CGFloat) -> Void
+    let onEnd: () -> Void
+    /// VoiceOver's equivalent of the drag: -1 moves left, +1 right.
+    let onNudge: (Int) -> Bool
+}
+
 private struct PoseThumbnail: View {
     let overlay: OverlayRecord
     let selected: Bool
     let flipped: Bool
+    let reorder: PoseReorder?
     let action: () -> Void
-    let onDelete: () -> Void
-    @State private var confirmsDelete = false
+
+    private var dragging: Bool { reorder?.dragging == true }
 
     var body: some View {
-        thumbnail
-            .buttonStyle(PressScaleButtonStyle())
-            .accessibilityLabel(selected ? "Selected pose" : "Pose")
-            .accessibilityHint("Tap to select, flip, then remove")
-    }
-
-    @ViewBuilder
-    private var thumbnail: some View {
-        let button = Button(action: action) {
+        Button(action: action) {
             LocalFileImage(
                 url: ImageStore.shared.overlayURL(overlay),
                 contentMode: .fit,
                 maxPixel: 220
             )
             .scaleEffect(x: flipped ? -1 : 1, y: 1)
-            .frame(width: 54, height: 72)
+            .frame(width: PoseStripMetrics.thumbWidth, height: PoseStripMetrics.thumbHeight)
             .background(Theme.Colors.black.opacity(0.16))
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
@@ -953,20 +1084,47 @@ private struct PoseThumbnail: View {
                     )
             }
         }
-
-        // Sample poses can't be deleted, so they get no context menu at all.
-        if overlay.isBuiltIn {
-            button
-        } else {
-            button
-                .contextMenu {
-                    Button("Delete pose", systemImage: "trash", role: .destructive) { confirmsDelete = true }
-                }
-                .confirmationDialog("Delete this pose from POSER?", isPresented: $confirmsDelete) {
-                    Button("Delete pose", role: .destructive, action: onDelete)
-                    Button("Cancel", role: .cancel) { }
-                }
+        .buttonStyle(PressScaleButtonStyle())
+        // The lift: the held pose grows out of the row and casts a shadow so it
+        // reads as picked up off the strip rather than sliding along it.
+        .scaleEffect(dragging ? 1.12 : 1)
+        .shadow(color: Theme.Colors.black.opacity(dragging ? 0.34 : 0), radius: 12, y: 6)
+        .offset(x: reorder?.offset ?? 0)
+        .animation(.poserGlide, value: dragging)
+        .gesture(holdGesture)
+        .accessibilityLabel(selected ? "Selected pose" : "Pose")
+        .accessibilityHint(reorder == nil ? "Tap to select, then flip" : "Tap to select, then flip. Hold and drag to rearrange")
+        .accessibilityActions {
+            if let reorder {
+                Button("Move left") { _ = reorder.onNudge(-1) }
+                Button("Move right") { _ = reorder.onNudge(1) }
+            }
         }
+    }
+
+    /// Hold to lift, then drag. `minimumDistance: 0` so the drag is already
+    /// live the instant the press succeeds - otherwise the first few points of
+    /// travel are swallowed and the thumbnail lags the finger out of the gate.
+    ///
+    /// The reserved most-recent slot has no `reorder`, so holding it does
+    /// nothing at all rather than lifting a pose that cannot go anywhere.
+    private var holdGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.28)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                switch value {
+                case .first(true):
+                    guard let reorder, !dragging else { return }
+                    UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                    reorder.onBegin()
+                case .second(true, let drag):
+                    guard let drag else { return }
+                    reorder?.onChange(drag.translation.width)
+                default:
+                    break
+                }
+            }
+            .onEnded { _ in reorder?.onEnd() }
     }
 }
 
