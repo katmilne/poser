@@ -175,10 +175,12 @@ enum BundledPoseCatalog {
         )
     }
 
-    /// Version 11 adds the second pose drop: 31 poses, 23 of them premium.
+    /// Version 12 retags 16 poses (vibe and framing only - no pose added,
+    /// removed, or moved between tiers), which reaches existing installs
+    /// because the seed loop refreshes `record.tags` on every version bump.
     /// Existing records keep their favourites and framing - the seed loop only
     /// forces `isFavorite` for starter poses on a first install.
-    private static let catalogVersion = 11
+    private static let catalogVersion = 12
     private static let catalogVersionKey = "bundledPoseCatalogVersion"
 
     /// Fresh installs start with one solo, one duo, and one group pose
@@ -186,7 +188,7 @@ enum BundledPoseCatalog {
     /// Listed in the order they should appear in the strip: solo, then duo,
     /// then group.
     private static let starterFavoriteIDs: [String] = [
-        "builtin-silly-cat-claw",   // solo · female · silly
+        "builtin-silly-cat-claw",   // solo · female · cute
         "builtin-table-heart-duo",  // duo · female · cute
         "builtin-trio-street-lean"  // group · female · cool
     ]
@@ -235,22 +237,22 @@ enum BundledPoseCatalog {
         Pose(id: "builtin-cute-rainy-umbrella-crouch", name: "rainy-umbrella-crouch", vibe: "cute", framing: ["overhead"], isPremium: true),
         Pose(id: "builtin-cute-sidewalk-hand-on-hip", name: "sidewalk-hand-on-hip", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.55)),
         Pose(id: "builtin-cute-doorstep-sit", name: "doorstep-sit", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.58)),
-        Pose(id: "builtin-silly-cat-claw", name: "cat-claw", vibe: "silly", framing: ["overhead"]),
+        Pose(id: "builtin-silly-cat-claw", name: "cat-claw", vibe: "cute", framing: ["overhead"]),
         Pose(
             id: "builtin-silly-reach-for-camera",
             name: "reach-for-camera",
-            vibe: "silly",
+            vibe: "cute",
             cropCenter: CGPoint(x: 0.5, y: 0.58),
             isPremium: true
         ),
 
         // Solo poses
-        optimizedPose("camera-recline", genders: ["m"], vibe: "cool"),
+        optimizedPose("camera-recline", genders: ["m"], vibe: "cute"),
         optimizedPose("cross-legged-park", genders: ["m"], vibe: "cool"),
         optimizedPose("waterside-lookback", genders: ["m"], vibe: "cool", framing: ["hidden-face"], cropCenter: CGPoint(x: 0.5, y: 0.55)),
         premiumPose("city-bench", genders: ["m"], vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
         premiumPose("shaded-curb-sit", genders: ["m"], vibe: "cool", framing: ["hidden-face", "overhead"]),
-        optimizedPose("cafe-crate-sit", vibe: "cute", framing: ["overhead"]),
+        optimizedPose("cafe-crate-sit", vibe: "cool", framing: ["overhead"]),
         optimizedPose("overhead-crouch", vibe: "cute", framing: ["overhead"]),
         premiumPose("crosswalk-lean", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.58)),
         premiumPose("sunny-curb-sit", vibe: "cute"),
@@ -273,10 +275,10 @@ enum BundledPoseCatalog {
         optimizedPose("sunglasses-selfie", vibe: "cool", framing: ["selfie", "overhead"]),
         optimizedPose("phone-show-selfie", vibe: "cute", framing: ["selfie"]),
         optimizedPose("mirror-phone-selfie", vibe: "cool", framing: ["selfie"]),
-        optimizedPose("crouch-selfie", vibe: "cute", framing: ["selfie"]),
+        optimizedPose("crouch-selfie", vibe: "cute"),
         premiumPose("drink-selfie", vibe: "cool", framing: ["selfie", "overhead"]),
-        optimizedPose("outfit-selfie", vibe: "cool", framing: ["hidden-face", "overhead", "selfie"]),
-        premiumPose("dress-selfie", vibe: "cute", framing: ["selfie", "overhead"]),
+        optimizedPose("outfit-selfie", vibe: "cute", framing: ["hidden-face", "overhead", "selfie"]),
+        premiumPose("dress-selfie", vibe: "cute", framing: ["overhead"]),
         optimizedPose("seated-street-selfie", vibe: "cute", framing: ["selfie"]),
 
         // Solo poses, second drop. Mostly premium: solo/cool and solo/cute are
@@ -296,22 +298,22 @@ enum BundledPoseCatalog {
         optimizedPose("stairs-head-back", genders: ["m"], vibe: "cool", framing: ["overhead"], cropCenter: CGPoint(x: 0.5, y: 0.62)),
         premiumPose("lamppost-leg-up", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.53)),
         premiumPose("headphones-walk-away", vibe: "cool", framing: ["hidden-face"], cropCenter: CGPoint(x: 0.5, y: 0.52)),
-        premiumPose("curb-hands-face", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.58)),
+        premiumPose("curb-hands-face", vibe: "cute", framing: ["hidden-face"], cropCenter: CGPoint(x: 0.5, y: 0.58)),
         premiumPose("wall-lean-lookback", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.49)),
         optimizedPose("pavement-sit-cap", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.60)),
         premiumPose(
             "arm-out-overhead-selfie",
-            vibe: "cute",
+            vibe: "cool",
             framing: ["selfie", "overhead"],
             cropCenter: CGPoint(x: 0.5, y: 0.44)
         ),
-        optimizedPose("night-finger-frame", genders: ["m"], vibe: "silly", cropCenter: CGPoint(x: 0.5, y: 0.48)),
+        optimizedPose("night-finger-frame", genders: ["m"], vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.48)),
         premiumPose("hand-to-lens-crouch", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.42)),
         premiumPose("peace-sign-selfie", vibe: "cute", framing: ["selfie"], cropCenter: CGPoint(x: 0.5, y: 0.40)),
-        premiumPose("railing-lean-soft", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.62)),
+        premiumPose("railing-lean-soft", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.62)),
         premiumPose(
             "hand-to-head-selfie",
-            vibe: "cute",
+            vibe: "cool",
             framing: ["selfie", "overhead"],
             cropCenter: CGPoint(x: 0.5, y: 0.45)
         ),
@@ -333,11 +335,11 @@ enum BundledPoseCatalog {
 
         // Duo poses
         optimizedPose("cafe-drinks-duo", people: "duo", genders: ["m"], vibe: "cool"),
-        optimizedPose("overhead-toast-duo", people: "duo", genders: ["m"], vibe: "cool", framing: ["overhead"]),
+        optimizedPose("overhead-toast-duo", people: "duo", genders: ["m"], vibe: "cute", framing: ["overhead"]),
         premiumPose("street-steps-duo", people: "duo", genders: ["m"], vibe: "cool"),
         premiumPose("record-store-duo", people: "duo", genders: ["m"], vibe: "cool"),
-        optimizedPose("hooded-night-duo", people: "duo", vibe: "cool", framing: ["hidden-face", "overhead"]),
-        premiumPose("cat-cafe-selfie", people: "duo", vibe: "cool", framing: ["selfie"]),
+        optimizedPose("hooded-night-duo", people: "duo", vibe: "cute", framing: ["hidden-face", "overhead"]),
+        premiumPose("cat-cafe-selfie", people: "duo", vibe: "cute", framing: ["low", "selfie"]),
         premiumPose("crosswalk-overhead-duo", people: "duo", vibe: "cool", framing: ["hidden-face", "overhead", "selfie"]),
         premiumPose("cafe-steps-duo", people: "duo", vibe: "cool"),
         optimizedPose("hand-heart-frame-duo", people: "duo", vibe: "cute", framing: ["hidden-face"]),
@@ -345,7 +347,7 @@ enum BundledPoseCatalog {
         optimizedPose("table-heart-duo", people: "duo", vibe: "cute", framing: ["hidden-face"]),
         optimizedPose("giant-tiny-split", people: "duo", vibe: "silly", framing: ["illusion"]),
         premiumPose("giant-drink-pour-duo", people: "duo", vibe: "silly", framing: ["illusion"]),
-        optimizedPose("palm-sized-friend", people: "duo", vibe: "silly", framing: ["illusion"]),
+        optimizedPose("palm-sized-friend", people: "duo", vibe: "cool", framing: ["illusion"]),
         optimizedPose("peace-sign-duo-selfie", people: "duo", genders: ["f", "m"], vibe: "silly", framing: ["selfie"]),
         optimizedPose(
             "sunset-hug-selfie",
@@ -388,7 +390,7 @@ enum BundledPoseCatalog {
             cropCenter: CGPoint(x: 0.5, y: 0.48)
         ),
         optimizedPose("duo-heart-hands-night", people: "duo", genders: ["m"], vibe: "cute"),
-        optimizedPose("giant-hand-friend-down", people: "duo", genders: ["m"], vibe: "silly", framing: ["illusion"]),
+        optimizedPose("giant-hand-friend-down", people: "duo", genders: ["m"], vibe: "cool", framing: ["illusion"]),
 
         // Group poses
         premiumPose("friends-cheer", people: "group", vibe: "cute"),
@@ -415,7 +417,7 @@ enum BundledPoseCatalog {
             people: "group",
             genders: ["m"],
             vibe: "cool",
-            framing: ["selfie"],
+            framing: ["low", "selfie"],
             cropCenter: CGPoint(x: 0.5, y: 0.46)
         ),
         optimizedPose(
