@@ -40,6 +40,9 @@ struct FeatureHintsOverlay: View {
     @State private var index = 0
 
     var body: some View {
+        // The reader itself ignores the safe area so anchors, the spotlight
+        // hole, the ring and the callout all resolve in one full-screen space.
+        // Letting only the mask ignore it shifts the hole down by the top inset.
         GeometryReader { proxy in
             if steps.indices.contains(index) {
                 let step = steps[index]
@@ -48,7 +51,6 @@ struct FeatureHintsOverlay: View {
                     ZStack {
                         SpotlightMask(hole: rect)
                             .fill(Color.black.opacity(0.62), style: FillStyle(eoFill: true))
-                            .ignoresSafeArea()
                             .contentShape(Rectangle())
                             .onTapGesture(perform: advance)
 
@@ -58,7 +60,7 @@ struct FeatureHintsOverlay: View {
                             .position(x: rect.midX, y: rect.midY)
                             .allowsHitTesting(false)
 
-                        callout(for: step, near: rect, in: proxy.size)
+                        callout(for: step, near: rect, in: proxy.size, insets: proxy.safeAreaInsets)
                     }
                     .transition(.opacity)
                 } else {
@@ -68,10 +70,11 @@ struct FeatureHintsOverlay: View {
                 }
             }
         }
+        .ignoresSafeArea()
         .animation(.poserGlide, value: index)
     }
 
-    private func callout(for step: HintStep, near rect: CGRect, in screen: CGSize) -> some View {
+    private func callout(for step: HintStep, near rect: CGRect, in screen: CGSize, insets: EdgeInsets) -> some View {
         let showsBelow = rect.midY < screen.height * 0.62
         let width = min(280, screen.width - 40)
         return GlassSurface(cornerRadius: Theme.Radius.md, tint: Theme.Colors.cream.opacity(0.95)) {
@@ -109,8 +112,8 @@ struct FeatureHintsOverlay: View {
         .position(
             x: min(max(rect.midX, width / 2 + 16), screen.width - width / 2 - 16),
             y: showsBelow
-                ? min(rect.maxY + 96, screen.height - 70)
-                : max(rect.minY - 96, 70)
+                ? min(rect.maxY + 96, screen.height - insets.bottom - 70)
+                : max(rect.minY - 96, insets.top + 70)
         )
     }
 
