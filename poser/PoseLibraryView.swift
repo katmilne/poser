@@ -325,7 +325,18 @@ private struct PoseLibraryTile: View {
                         RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
                             .stroke(Color.white.opacity(0.88), lineWidth: 1)
                     }
-                    .shadow(color: Theme.stickerShadow, radius: 24, y: 8)
+                    // Cast from an opaque shape behind the tile rather than from
+                    // the tile itself. A shadow on clipped image content has to
+                    // rasterize that content offscreen to derive its alpha every
+                    // frame; an equivalent rounded rect lets Core Animation take
+                    // its shadow-path fast path instead. Same look, no per-frame
+                    // pass - and with two columns of these it is the difference
+                    // the scroll actually feels.
+                    .background {
+                        RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                            .fill(Theme.Colors.mist)
+                            .shadow(color: Theme.stickerShadow, radius: 24, y: 8)
+                    }
             }
             .buttonStyle(PressScaleButtonStyle())
             .accessibilityLabel(locked ? "Premium pose, unlock to use" : "Use this pose")
@@ -349,10 +360,13 @@ private struct PoseLibraryTile: View {
             }
 
             Button(action: onFavorite) {
+                // Not `interactive`: that variant tracks touch to deform the
+                // glass live, which is worth it for a lone control but not
+                // multiplied across a scrolling grid, where the deformation is
+                // never seen and the cost is paid on every frame regardless.
                 GlassSurface(
                     cornerRadius: 22,
-                    tint: favoriteTint,
-                    interactive: true
+                    tint: favoriteTint
                 ) {
                     Image(systemName: favoriteSymbol)
                         .font(.system(size: 18, weight: .bold))
