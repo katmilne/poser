@@ -24,6 +24,7 @@ struct GalleryView: View {
     @State private var confirmsDelete: ShotRecord?
     @State private var sharePayload: SharePayload?
     @State private var editingShot: ShotRecord?
+    @State private var paywallContext: PaywallContext?
 
     // Each photo's page and pocket are assigned once, from its own arrival
     // order, and never recomputed relative to photos taken afterwards - so
@@ -140,6 +141,9 @@ struct GalleryView: View {
                 PreviewEditorView(shot: shot, isDraft: false)
             }
             .shareSheet(payload: $sharePayload)
+            .sheet(item: $paywallContext) { context in
+                PaywallView(context: context)
+            }
             .alert("Album", isPresented: Binding(
                 get: { saveMessage != nil },
                 set: { if !$0 { saveMessage = nil } }
@@ -285,11 +289,19 @@ struct GalleryView: View {
         return overlays.contains { $0.id == ghost.overlayId }
     }
 
+    /// "Use this pose again" is a second way into ghost selection, separate
+    /// from the pose library. A shot taken while premium keeps its ghost
+    /// reference forever, so after a lapse this is the most likely place a
+    /// premium pose gets reached for - hence the same paywall the library uses.
     private func useGhost(from shot: ShotRecord) {
         guard let ghost = shot.ghost else { return }
         let descriptor = FetchDescriptor<OverlayRecord>(predicate: #Predicate { $0.id == ghost.overlayId })
         if let overlay = try? modelContext.fetch(descriptor).first {
-            appState.selectGhost(overlay)
+            guard appState.selectGhost(overlay) else {
+                Analytics.track("premium_pose_tapped", ["pose": overlay.id])
+                paywallContext = .premiumPose
+                return
+            }
             lightboxShot = nil
             appState.showsGallery = false
             return
@@ -313,7 +325,11 @@ struct GalleryView: View {
                 )
                 modelContext.insert(overlay)
                 try modelContext.save()
-                appState.selectGhost(overlay)
+                guard appState.selectGhost(overlay) else {
+                    Analytics.track("premium_pose_tapped", ["pose": overlay.id])
+                    paywallContext = .premiumPose
+                    return
+                }
                 lightboxShot = nil
                 appState.showsGallery = false
             } catch {

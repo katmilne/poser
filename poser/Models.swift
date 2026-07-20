@@ -159,6 +159,14 @@ final class OverlayRecord {
     /// Sample poses shipped with the app use `builtin-` prefixed ids
     /// (see `BundledPoseCatalog`). Only user-added poses may be deleted.
     var isBuiltIn: Bool { id.hasPrefix("builtin-") }
+
+    /// Whether this pose belongs to the premium half of the bundled
+    /// collection. Derived from the catalog rather than persisted, so moving a
+    /// pose between the free and premium sets is a one-line catalog edit that
+    /// takes effect on the next launch without a migration or a reseed.
+    /// Ask `PremiumStore.isLocked(_:)` for whether it is actually locked -
+    /// this only says which set it is in.
+    var isPremiumPose: Bool { BundledPoseCatalog.premiumPoseIDs.contains(id) }
 }
 
 @Model
@@ -267,13 +275,23 @@ enum PoseTags {
         Group(id: "pet", options: [("pet", "Pet")], allowsMultiple: true, isRequired: false),
         Group(
             id: "vibe",
-            options: [("cute", "Cute"), ("cool", "Cool"), ("silly", "Silly"), ("dramatic", "Dramatic")],
+            options: [("cute", "Cute"), ("cool", "Cool"), ("silly", "Silly")],
             allowsMultiple: false,
             isRequired: true
         ),
         Group(
             id: "framing",
-            options: [("selfie", "Selfie"), ("overhead", "Overhead"), ("illusion", "Illusion")],
+            options: [
+                ("selfie", "Selfie"),
+                ("overhead", "Overhead"),
+                // The counterpart to overhead: camera below eye line, shooting up.
+                ("low", "Low angle"),
+                ("illusion", "Illusion"),
+                // Shots where the face is turned away, covered, or cropped out -
+                // a browsing preference for anyone who wants photos of themselves
+                // without being identifiable in them.
+                ("hidden-face", "Face hidden")
+            ],
             allowsMultiple: true,
             isRequired: false
         )

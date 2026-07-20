@@ -15,7 +15,7 @@ struct PoseLibraryView: View {
     @State private var framingRequest: PoseFramingRequest?
     @State private var importError: String?
     @State private var isImporting = false
-    @State private var showsPaywall = false
+    @State private var paywallContext: PaywallContext?
 
     private var customPoseCount: Int { overlays.count { !$0.isBuiltIn } }
 
@@ -28,13 +28,14 @@ struct PoseLibraryView: View {
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
     private var filteredOverlays: [OverlayRecord] {
-        guard !selectedTags.isEmpty else { return overlays }
-        return overlays.filter { overlay in
+        guard !selectedTags.isEmpty else { return PoseBrowseOrder.apply(to: overlays) }
+        let matches = overlays.filter { overlay in
             PoseTags.groups.allSatisfy { group in
                 let active = selectedTags.intersection(group.options.map(\.id))
                 return active.isEmpty || !active.isDisjoint(with: overlay.tags)
             }
         }
+        return PoseBrowseOrder.apply(to: matches)
     }
 
     var body: some View {
@@ -47,8 +48,16 @@ struct PoseLibraryView: View {
                         LazyVGrid(columns: columns, spacing: 12) {
                             addPoseTile
                             ForEach(filteredOverlays) { overlay in
-                                PoseLibraryTile(overlay: overlay) {
-                                    appState.selectGhost(overlay)
+                                PoseLibraryTile(overlay: overlay, locked: premium.isLocked(overlay)) {
+                                    // AppState refuses the selection itself, so
+                                    // this reads the refusal rather than
+                                    // re-deriving the lock and hoping the two
+                                    // stay in agreement.
+                                    guard appState.selectGhost(overlay) else {
+                                        Analytics.track("premium_pose_tapped", ["pose": overlay.id])
+                                        paywallContext = .premiumPose
+                                        return
+                                    }
                                     try? modelContext.save()
                                     dismiss()
                                 } onTag: {
@@ -56,15 +65,26 @@ struct PoseLibraryView: View {
                                 } onReframe: {
                                     framingRequest = PoseFramingRequest(overlays: [overlay], tagsAfter: false)
                                 } onFavorite: {
+                                    // Favouriting puts a pose in the camera's
+                                    // strip, so it is gated the same as picking
+                                    // one: the strip must never hold a pose the
+                                    // viewfinder would refuse to show.
+                                    guard !premium.isLocked(overlay) else {
+                                        Analytics.track("premium_pose_tapped", ["pose": overlay.id])
+                                        paywallContext = .premiumPose
+                                        return
+                                    }
                                     overlay.isFavorite.toggle()
+                                    // Only the active ghost is released - the
+                                    // pinned library slot deliberately outlives
+                                    // unfavoriting so the pose stays reachable.
                                     if !overlay.isFavorite, appState.selectedGhost?.id == overlay.id {
-                                        appState.selectedGhost = nil
+                                        appState.clearGhost()
                                     }
                                     try? modelContext.save()
                                 } onDelete: {
                                     guard !overlay.isBuiltIn else { return }
-                                    if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
-                                    if appState.libraryPose?.id == overlay.id { appState.libraryPose = nil }
+                                    appState.forgetPose(id: overlay.id)
                                     modelContext.delete(overlay)
                                     Task { await ImageStore.shared.deleteOverlay(overlay) }
                                 }
@@ -123,8 +143,8 @@ struct PoseLibraryView: View {
         } message: {
             Text(importError ?? "Please try another photo.")
         }
-        .sheet(isPresented: $showsPaywall) {
-            PaywallView(context: .poseLimit)
+        .sheet(item: $paywallContext) { context in
+            PaywallView(context: context)
         }
     }
 
@@ -143,7 +163,7 @@ struct PoseLibraryView: View {
             .frame(maxWidth: .infinity)
             .accessibilityLabel("Add pose from Photos")
         } else {
-            Button { showsPaywall = true } label: {
+            Button { paywallContext = .poseLimit } label: {
                 addPoseTileLabel
             }
             .buttonStyle(PressScaleButtonStyle())
@@ -157,7 +177,7 @@ struct PoseLibraryView: View {
             VStack(spacing: 12) {
                 Image(systemName: addPoseLocked ? "sparkles" : "photo.badge.plus")
                     .font(.system(size: 32, weight: .semibold))
-                    .foregroundStyle(addPoseLocked ? Theme.Colors.lemon : Theme.Colors.ink)
+                    .foregroundStyle(addPoseLocked ? Theme.Colors.denim : Theme.Colors.ink)
                 Text("Add pose")
                     .font(.system(size: 16, weight: .black, design: .rounded))
                 Text(addPoseSubtitle)
@@ -272,6 +292,9 @@ private struct PoseFramingRequest: Identifiable {
 
 private struct PoseLibraryTile: View {
     let overlay: OverlayRecord
+    /// Premium pose without the entitlement: shown in full as a teaser, with
+    /// every action routed to the paywall by the parent.
+    let locked: Bool
     let onSelect: () -> Void
     let onTag: () -> Void
     let onReframe: () -> Void
@@ -282,10 +305,11 @@ private struct PoseLibraryTile: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Button(action: onSelect) {
-                LocalFileImage(url: ImageStore.shared.overlayURL(overlay), maxPixel: 700)
+                poseImage
                     .frame(maxWidth: .infinity)
                     .aspectRatio(Theme.viewportAspect, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+                    .overlay { if locked { lockedVeil } }
                     .overlay(alignment: .bottomLeading) {
                         if !overlay.tags.isEmpty {
                             Text(overlay.tags.map { $0.uppercased() }.joined(separator: " · "))
@@ -304,42 +328,101 @@ private struct PoseLibraryTile: View {
                     .shadow(color: Theme.stickerShadow, radius: 24, y: 8)
             }
             .buttonStyle(PressScaleButtonStyle())
+            .accessibilityLabel(locked ? "Premium pose, unlock to use" : "Use this pose")
             .contextMenu {
-                Button(
-                    overlay.isFavorite ? "Remove from favorites" : "Add to favorites",
-                    systemImage: overlay.isFavorite ? "heart.slash" : "heart",
-                    action: onFavorite
-                )
-                Button("Edit tags", systemImage: "tag", action: onTag)
-                Button("Reframe pose", systemImage: "crop", action: onReframe)
-                if !overlay.isBuiltIn {
-                    Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                if locked {
+                    // Tagging and reframing both write to the record, so they
+                    // stay behind the same gate as using the pose.
+                    Button("Unlock with Premium", systemImage: "lock.fill", action: onSelect)
+                } else {
+                    Button(
+                        overlay.isFavorite ? "Remove from favorites" : "Add to favorites",
+                        systemImage: overlay.isFavorite ? "heart.slash" : "heart",
+                        action: onFavorite
+                    )
+                    Button("Edit tags", systemImage: "tag", action: onTag)
+                    Button("Reframe pose", systemImage: "crop", action: onReframe)
+                    if !overlay.isBuiltIn {
+                        Button("Delete", systemImage: "trash", role: .destructive) { confirmsDelete = true }
+                    }
                 }
             }
 
             Button(action: onFavorite) {
                 GlassSurface(
                     cornerRadius: 22,
-                    tint: overlay.isFavorite ? Theme.Colors.glassSelected : Theme.Colors.black.opacity(0.14),
+                    tint: favoriteTint,
                     interactive: true
                 ) {
-                    Image(systemName: overlay.isFavorite ? "heart.fill" : "heart")
+                    Image(systemName: favoriteSymbol)
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(overlay.isFavorite ? Theme.Colors.recRed : Theme.Colors.ink)
+                        .foregroundStyle(favoriteForeground)
                         .frame(width: 44, height: 44)
                         .contentShape(.circle)
                 }
             }
             .buttonStyle(PressScaleButtonStyle())
             .padding(8)
-            .accessibilityLabel(overlay.isFavorite ? "Remove pose from favorites" : "Add pose to favorites")
-            .accessibilityAddTraits(overlay.isFavorite ? .isSelected : [])
+            .accessibilityLabel(favoriteAccessibilityLabel)
+            .accessibilityAddTraits(!locked && overlay.isFavorite ? .isSelected : [])
             .sensoryFeedback(.selection, trigger: overlay.isFavorite)
         }
         .confirmationDialog("Delete this pose from POSER?", isPresented: $confirmsDelete) {
             Button("Delete pose", role: .destructive, action: onDelete)
             Button("Cancel", role: .cancel) { }
         }
+    }
+
+    private var poseImage: some View {
+        // Locked poses render unobscured: seeing exactly what premium buys is
+        // the pitch, and a pose the user cannot select is not a leak.
+        LocalFileImage(url: ImageStore.shared.overlayURL(overlay), maxPixel: 700)
+    }
+
+    /// A light scrim plus the padlock badge, enough to read as "you cannot use
+    /// this" while leaving the pose legible. The padlock says that in a way a
+    /// sparkle does not - the sparkle reads as decoration, and this tile is not
+    /// tappable-to-use.
+    private var lockedVeil: some View {
+        ZStack {
+            Theme.Colors.denim.opacity(0.14)
+            GlassSurface(cornerRadius: Theme.Radius.sm, tint: Theme.Colors.grape.opacity(0.86)) {
+                HStack(spacing: 5) {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("PREMIUM")
+                        .font(.system(size: 10, weight: .black, design: .monospaced))
+                        .tracking(0.9)
+                }
+                .foregroundStyle(Theme.Colors.ink)
+                .padding(.horizontal, 11)
+                .frame(height: 30)
+            }
+            .fixedSize()
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var favoriteSymbol: String {
+        if locked { return "lock.fill" }
+        return overlay.isFavorite ? "heart.fill" : "heart"
+    }
+
+    /// The locked padlock takes the same plain glass as an unfavorited heart:
+    /// the icon already carries the meaning, so it needs no colour of its own.
+    private var favoriteTint: Color {
+        if !locked, overlay.isFavorite { return Theme.Colors.glassSelected }
+        return Theme.Colors.black.opacity(0.14)
+    }
+
+    private var favoriteForeground: Color {
+        if !locked, overlay.isFavorite { return Theme.Colors.recRed }
+        return Theme.Colors.ink
+    }
+
+    private var favoriteAccessibilityLabel: String {
+        if locked { return "Premium pose, unlock to use" }
+        return overlay.isFavorite ? "Remove pose from favorites" : "Add pose to favorites"
     }
 }
 
@@ -727,5 +810,64 @@ private struct PoseTaggingFlow: View {
             index += 1
             loadSelections()
         }
+    }
+}
+
+/// Browse order for the library grid.
+///
+/// The bundled catalog is authored in blocks - a run of women, then a run of
+/// men, each grouped by vibe - and records are stamped with `addedAt` in that
+/// same order, so sorting by it hands the grid one long block of women
+/// followed by one long block of men. This spreads the built-ins instead: each
+/// gender bucket is shuffled, then the buckets are interleaved evenly so
+/// neighbouring tiles rarely share a gender.
+///
+/// Ordering here rather than at seed time leaves `addedAt` alone, so favourites
+/// and the camera strip - which both sort by it - are unaffected, and no
+/// catalog reseed is needed. The result is a pure function of the pose ids: the
+/// shelf looks the same on every launch, where a fresh shuffle each time would
+/// slide poses out from under a scrolling thumb.
+@MainActor
+private enum PoseBrowseOrder {
+    /// Imported poses stay at the front in newest-first order, matching where
+    /// their `addedAt` already put them; only the built-ins get rearranged.
+    static func apply(to records: [OverlayRecord]) -> [OverlayRecord] {
+        records.filter { !$0.isBuiltIn } + interleaved(records.filter(\.isBuiltIn))
+    }
+
+    private static func interleaved(_ builtIns: [OverlayRecord]) -> [OverlayRecord] {
+        let buckets = Dictionary(grouping: builtIns, by: genderKey)
+        // Each bucket is spread across a shared 0..<1 track, so a bucket of 10
+        // and a bucket of 40 both span the whole grid instead of the smaller
+        // one clumping at the front.
+        let placed = buckets.values.flatMap { bucket -> [(position: Double, record: OverlayRecord)] in
+            let shuffled = bucket.sorted { seed($0.id) < seed($1.id) }
+            let step = 1.0 / Double(shuffled.count)
+            return shuffled.enumerated().map { ((Double($0.offset) + 0.5) * step, $0.element) }
+        }
+        // The id seed breaks ties so two buckets landing on the same position
+        // interleave rather than ordering by whichever the dictionary yielded.
+        return placed
+            .sorted { ($0.position, seed($0.record.id)) < ($1.position, seed($1.record.id)) }
+            .map(\.record)
+    }
+
+    private static func genderKey(_ record: OverlayRecord) -> String {
+        switch (record.tags.contains("f"), record.tags.contains("m")) {
+        case (true, true): "mixed"
+        case (false, true): "m"
+        default: "f"
+        }
+    }
+
+    /// FNV-1a over the pose id. `String.hashValue` is seeded per process, so it
+    /// would reshuffle the entire grid on every launch.
+    private static func seed(_ id: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in id.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 0x100_0000_01b3
+        }
+        return hash
     }
 }

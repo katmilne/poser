@@ -289,7 +289,7 @@ struct PreviewEditorView: View {
             .foregroundStyle(Theme.Colors.ink)
             .frame(width: 54, height: 54)
             .background(
-                stickerMakerLocked ? Theme.Colors.lemon : Theme.Colors.cyan,
+                stickerMakerLocked ? Theme.Colors.grape : Theme.Colors.cyan,
                 in: RoundedRectangle(cornerRadius: 13, style: .continuous)
             )
         }

@@ -8,6 +8,7 @@ enum PaywallContext: String, Identifiable {
     case onboarding
     case discover
     case poseLimit
+    case premiumPose
     case stickerLimit
     case general
 
@@ -18,6 +19,7 @@ enum PaywallContext: String, Identifiable {
         case .onboarding: "GO PREMIUM"
         case .discover: "DISCOVER PREMIUM"
         case .poseLimit: "POSE LIMIT REACHED"
+        case .premiumPose: "PREMIUM POSE"
         case .stickerLimit: "STICKER LIMIT REACHED"
         case .general: "POSER PREMIUM"
         }
@@ -26,9 +28,11 @@ enum PaywallContext: String, Identifiable {
     var message: String {
         switch self {
         case .onboarding, .discover, .general:
-            "Unlimited poses from Photos and unlimited custom cutout stickers. The camera stays free forever."
+            "The whole pose collection, unlimited poses from Photos, and unlimited custom cutout stickers. The camera stays free forever."
         case .poseLimit:
             "Free includes \(PremiumStore.freePoseLimit) poses from Photos. Premium makes them unlimited - poses you've already added stay yours either way."
+        case .premiumPose:
+            "This one is part of the Premium collection. Unlock it and every other premium pose, plus unlimited poses from Photos and unlimited cutout stickers."
         case .stickerLimit:
             "Free includes \(PremiumStore.freeStickerLimit) custom cutout stickers. Premium makes them unlimited - stickers you've already made stay yours either way."
         }
@@ -68,9 +72,10 @@ struct PaywallPlan: Identifiable {
 /// `annual_intro_30_day`. The in-app paywall uses RevenueCat's current
 /// offering, falling back to offering `default`.
 ///
-/// Free tier: 3 poses from Photos, 3 custom cutout stickers. Lapse never
-/// deletes anything - records created while premium stay usable; only the
-/// ability to create beyond the free limits goes away.
+/// Free tier: the free half of the bundled pose collection, 3 poses from
+/// Photos, 3 custom cutout stickers. Lapse never deletes anything - records
+/// created while premium stay usable; only the ability to create beyond the
+/// free limits, and access to the premium half of the collection, goes away.
 @MainActor
 @Observable
 final class PremiumStore {
@@ -217,6 +222,14 @@ final class PremiumStore {
 
     func canAddCustomSticker(currentCount: Int) -> Bool {
         isUnlocked || currentCount < Self.freeStickerLimit
+    }
+
+    /// Premium poses are seeded onto every device so the library can show them
+    /// as a preview, so "locked" is purely a display-and-selection state - it
+    /// never means the pose is absent. Poses the user added from Photos are
+    /// always theirs, including ones imported while premium was active.
+    func isLocked(_ overlay: OverlayRecord) -> Bool {
+        !isUnlocked && overlay.isPremiumPose
     }
 
     // MARK: Plans

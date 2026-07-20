@@ -44,17 +44,36 @@ flourish, but the camera preview itself is never paused or frozen.
 
 ## Monetization
 
-Poser is free to use with two capped free-tier limits:
+Poser is free to use with three free-tier limits:
 
+- 58 of the 109 built-in reference poses (the other 51 are premium)
 - 3 poses imported from Photos
 - 3 custom cutout stickers
 
 The camera, ghost-pose matching, album, and basic editing are free and
 unlimited. Records created while under a free or lapsed-premium state are
 never deleted - lapsing only removes the ability to create *beyond* the free
-limits.
+limits, and access to the premium poses.
 
-**Premium** ("Poser Premium") removes both caps and is offered via
+Premium poses are seeded onto every device and shown in the pose library
+blurred, badged, and tappable-to-paywall, so the collection reads as one
+library with a locked half rather than as missing content. Which poses are
+premium is derived from `BundledPoseCatalog.premiumPoseIDs` at runtime rather
+than persisted on the record, so the split can be changed in a single catalog
+edit with no migration or reseed. The free set is spread across every filter
+facet (solo/duo/group, all three vibes, every framing, both gender tags, and
+the pet tag), so no filter combination lands a free user on an all-locked
+grid.
+
+New poses are assigned to a tier by how well the free tier already covers
+their `(people, vibe)` bucket: a pose lands in premium when its bucket is
+already well stocked for free, unless it fills a facet the free tier is thin
+on (`group`, or - where its own bucket is not already saturated -
+`illusion`). That is why the second drop is 23 premium / 8 free: it is almost
+entirely solo/cool and solo/cute work, the two buckets the free tier covers
+most heavily, while the free 8 go to duo, group, and illusion.
+
+**Premium** ("Poser Premium") removes all three caps and is offered via
 auto-renewing subscriptions and a one-time purchase, sold through the Apple
 App Store and managed with RevenueCat:
 

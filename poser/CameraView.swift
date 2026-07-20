@@ -7,6 +7,7 @@ import UIKit
 struct CameraView: View {
     @AppStorage("hasSeenCameraHints") private var hasSeenCameraHints = false
     @Environment(AppState.self) private var appState
+    @Environment(PremiumStore.self) private var premium
     @Environment(\.modelContext) private var modelContext
     @Environment(\.openURL) private var openURL
     @Query(sort: \OverlayRecord.addedAt, order: .reverse) private var overlays: [OverlayRecord]
@@ -26,6 +27,7 @@ struct CameraView: View {
     @State private var captureFrameInWindow = CGRect.zero
     @State private var errorMessage: String?
     @State private var referenceStripCollapsed = false
+    @State private var paywallContext: PaywallContext?
     @State private var pinchStartZoom: CGFloat?
     @State private var pinchStartZoomOut: CGFloat?
     /// 0 = the feed fills the whole screen (1×); 1 = it has shrunk to the 3:4
@@ -37,9 +39,16 @@ struct CameraView: View {
     /// while tapping strip favorites only swaps the active overlay. If that pose
     /// is already a favorite in the strip it keeps its existing place rather than
     /// being pulled to the front.
+    ///
+    /// Locked poses are filtered out rather than shown disabled. The library is
+    /// where premium poses are advertised; the strip is a working tool, and a
+    /// pose only reaches it by being favourited or picked, both of which are
+    /// already gated. This filter is the lapse case: a subscription that ends
+    /// leaves premium poses favourited, and they have to leave the strip
+    /// without being unfavourited, so they come back if the user resubscribes.
     private var stripOverlays: [OverlayRecord] {
-        let favorites = overlays.filter(\.isFavorite)
-        guard let pinned = appState.libraryPose else { return favorites }
+        let favorites = overlays.filter { $0.isFavorite && !premium.isLocked($0) }
+        guard let pinned = appState.libraryPose, !premium.isLocked(pinned) else { return favorites }
         if favorites.contains(where: { $0.id == pinned.id }) { return favorites }
         return [pinned] + favorites
     }
@@ -119,7 +128,7 @@ struct CameraView: View {
             // out. The preview re-bases this same measured rect for its own
             // full-screen coordinates.
             CaptureFrame(
-                ghost: camera.authorizationStatus == .authorized ? appState.selectedGhost : nil,
+                ghost: camera.authorizationStatus == .authorized ? appState.usableGhost : nil,
                 ghostFlipped: appState.ghostFlipped,
                 ghostOpacity: ghostHidden ? 0 : appState.ghostOpacity
             )
@@ -194,7 +203,17 @@ struct CameraView: View {
         })
         .task { await camera.requestAccessAndStart() }
         .task { await presentHintsIfNeeded() }
+        // A subscription can lapse while a premium pose is the active ghost, so
+        // the viewfinder re-checks rather than trusting what selection left
+        // behind. `initial: true` covers the lapse having happened off-screen.
+        // The render and capture paths read `usableGhost`, which re-tests the
+        // lock anyway, so this is about releasing the slot rather than about
+        // keeping a locked pose off screen.
+        .onChange(of: premium.isUnlocked, initial: true) { appState.enforcePoseLock() }
         .onDisappear { camera.stop() }
+        .sheet(item: $paywallContext) { context in
+            PaywallView(context: context)
+        }
         .alert("Camera hiccup", isPresented: Binding(
             get: { errorMessage != nil },
             set: { if !$0 { errorMessage = nil } }
@@ -367,15 +386,23 @@ struct CameraView: View {
                                     ForEach(stripOverlays) { overlay in
                                         PoseThumbnail(
                                             overlay: overlay,
-                                            selected: appState.selectedGhost?.id == overlay.id,
-                                            flipped: appState.selectedGhost?.id == overlay.id && appState.ghostFlipped
+                                            selected: appState.usableGhost?.id == overlay.id,
+                                            flipped: appState.usableGhost?.id == overlay.id && appState.ghostFlipped
                                         ) {
-                                            appState.cycleGhost(overlay)
+                                            // The strip already filters locked
+                                            // poses out, so this is the backstop
+                                            // for one that slipped in: refuse the
+                                            // selection and sell the upgrade
+                                            // rather than doing nothing.
+                                            guard appState.cycleGhost(overlay) else {
+                                                Analytics.track("premium_pose_tapped", ["pose": overlay.id])
+                                                paywallContext = .premiumPose
+                                                return
+                                            }
                                             try? modelContext.save()
                                         } onDelete: {
                                             guard !overlay.isBuiltIn else { return }
-                                            if appState.selectedGhost?.id == overlay.id { appState.selectedGhost = nil }
-                                            if appState.libraryPose?.id == overlay.id { appState.libraryPose = nil }
+                                            appState.forgetPose(id: overlay.id)
                                             modelContext.delete(overlay)
                                             Task { await ImageStore.shared.deleteOverlay(overlay) }
                                         }
@@ -389,8 +416,8 @@ struct CameraView: View {
                         }
                     }
                     GhostOpacitySlider(opacity: Bindable(appState).ghostOpacity)
-                        .disabled(appState.selectedGhost == nil)
-                        .opacity(appState.selectedGhost == nil ? 0 : 1)
+                        .disabled(appState.usableGhost == nil)
+                        .opacity(appState.usableGhost == nil ? 0 : 1)
                 }
                 .padding(10)
             }
@@ -460,7 +487,10 @@ struct CameraView: View {
         ghostHidden = true
         do {
             let data = try await camera.capturePhoto()
-            let ghostSnapshot = appState.selectedGhost.map {
+            // `usableGhost`, not `selectedGhost`: a shot stores its ghost so the
+            // gallery can re-arm that pose later, and a locked one must not get
+            // written into a photo that would hand it back after a lapse.
+            let ghostSnapshot = appState.usableGhost.map {
                 OverlaySnapshot(id: $0.id, fileName: $0.fileName, width: $0.width, height: $0.height)
             }
             let stored = try await ImageStore.shared.persistCapture(

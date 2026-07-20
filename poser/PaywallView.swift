@@ -246,6 +246,13 @@ private struct PaywallBenefitList: View {
 
     private static let benefits = [
         PaywallBenefit(
+            id: "collection",
+            symbol: "sparkles",
+            title: "EVERY POSE",
+            detail: "Unlock the full built-in collection, premium poses included.",
+            tint: Theme.Colors.lemon.opacity(0.82)
+        ),
+        PaywallBenefit(
             id: "poses",
             symbol: "photo.stack.fill",
             title: "UNLIMITED PHOTO POSES",
@@ -257,7 +264,7 @@ private struct PaywallBenefitList: View {
             symbol: "wand.and.stars",
             title: "UNLIMITED CUTOUT STICKERS",
             detail: "Turn more photos into custom stickers for your shots.",
-            tint: Theme.Colors.lemon.opacity(0.82)
+            tint: Theme.Colors.grape.opacity(0.82)
         )
     ]
 

@@ -120,8 +120,8 @@ struct SettingsSheet: View {
                             .tracking(1)
                         Text(
                             premium.isUnlocked
-                                ? "Unlimited poses and custom stickers."
-                                : "Unlimited poses from Photos and custom cutout stickers."
+                                ? "Every pose, unlimited imports and custom stickers."
+                                : "The full pose collection, unlimited poses from Photos, and custom cutout stickers."
                         )
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(Theme.Colors.textDim)

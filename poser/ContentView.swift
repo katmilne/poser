@@ -70,6 +70,7 @@ struct ContentView: View {
 #Preview {
     ContentView()
         .environment(AppState())
+        .environment(PremiumStore())
         .modelContainer(for: [ShotRecord.self, OverlayRecord.self, CustomStickerRecord.self], inMemory: true)
 }
 
@@ -90,6 +91,7 @@ enum BundledPoseCatalog {
         let sourceName: String
         let sourceExtension: String
         let cropCenter: CGPoint
+        let isPremium: Bool
 
         var tags: [String] { [people] + genders + [vibe] + framing + extras }
 
@@ -103,7 +105,8 @@ enum BundledPoseCatalog {
             extras: [String] = [],
             sourceName: String? = nil,
             sourceExtension: String = "png",
-            cropCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+            cropCenter: CGPoint = CGPoint(x: 0.5, y: 0.5),
+            isPremium: Bool = false
         ) {
             self.id = id
             self.name = name
@@ -115,7 +118,36 @@ enum BundledPoseCatalog {
             self.sourceName = sourceName ?? name
             self.sourceExtension = sourceExtension
             self.cropCenter = cropCenter
+            self.isPremium = isPremium
         }
+    }
+
+    /// The premium half of the collection. Every pose is still seeded and still
+    /// browsable - see `PremiumStore.isLocked(_:)` for what locking means.
+    /// Add a premium pose with `premiumPose(...)`, which is `optimizedPose(...)`
+    /// with the flag set; moving one between the sets is a rename at the call
+    /// site, since nothing about premium status is persisted.
+    static let premiumPoseIDs: Set<String> = Set(poses.lazy.filter(\.isPremium).map(\.id))
+
+    private static func premiumPose(
+        _ name: String,
+        people: String = "solo",
+        genders: [String] = ["f"],
+        vibe: String,
+        framing: [String] = [],
+        extras: [String] = [],
+        cropCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+    ) -> Pose {
+        optimizedPose(
+            name,
+            people: people,
+            genders: genders,
+            vibe: vibe,
+            framing: framing,
+            extras: extras,
+            cropCenter: cropCenter,
+            isPremium: true
+        )
     }
 
     private static func optimizedPose(
@@ -125,7 +157,8 @@ enum BundledPoseCatalog {
         vibe: String,
         framing: [String] = [],
         extras: [String] = [],
-        cropCenter: CGPoint = CGPoint(x: 0.5, y: 0.5)
+        cropCenter: CGPoint = CGPoint(x: 0.5, y: 0.5),
+        isPremium: Bool = false
     ) -> Pose {
         Pose(
             id: "builtin-\(name)",
@@ -137,12 +170,15 @@ enum BundledPoseCatalog {
             extras: extras,
             sourceName: "\(name)-source",
             sourceExtension: "jpg",
-            cropCenter: cropCenter
+            cropCenter: cropCenter,
+            isPremium: isPremium
         )
     }
 
-    /// Version 10 adds female, male, and pet subject tags across the bundled catalog.
-    private static let catalogVersion = 10
+    /// Version 11 adds the second pose drop: 31 poses, 23 of them premium.
+    /// Existing records keep their favourites and framing - the seed loop only
+    /// forces `isFavorite` for starter poses on a first install.
+    private static let catalogVersion = 11
     private static let catalogVersionKey = "bundledPoseCatalogVersion"
 
     /// Fresh installs start with one solo, one duo, and one group pose
@@ -150,7 +186,7 @@ enum BundledPoseCatalog {
     /// Listed in the order they should appear in the strip: solo, then duo,
     /// then group.
     private static let starterFavoriteIDs: [String] = [
-        "builtin-crosswalk-lean",   // solo · female · cool
+        "builtin-silly-cat-claw",   // solo · female · silly
         "builtin-table-heart-duo",  // duo · female · cute
         "builtin-trio-street-lean"  // group · female · cool
     ]
@@ -167,73 +203,150 @@ enum BundledPoseCatalog {
         seed.addingTimeInterval(Double(-rank))
     }
 
+    /// A starter favourite lands in the camera strip before anyone has paid, so
+    /// promoting one to premium would open a fresh install on a locked pose.
+    /// Moving a pose between the free and premium sets is a one-word edit at its
+    /// call site, far from this list, so this catches the mismatch in debug
+    /// rather than leaving it to be spotted in the running app.
+    private static func assertStarterFavoritesAreFree() {
+        assert(
+            starterFavoriteIDs.allSatisfy { !premiumPoseIDs.contains($0) },
+            "Starter favourites must be free: \(starterFavoriteIDs.filter(premiumPoseIDs.contains))"
+        )
+    }
+
     private static let poses = [
         Pose(id: "builtin-cool-sidewalk-sit", name: "sidewalk-sit", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        Pose(id: "builtin-cool-record-shop-crouch", name: "record-shop-crouch", vibe: "cool"),
+        Pose(id: "builtin-cool-record-shop-crouch", name: "record-shop-crouch", vibe: "cool", framing: ["overhead"]),
         Pose(id: "builtin-cool-doorway-knee-up", name: "doorway-knee-up", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        Pose(id: "builtin-cool-pavement-recline", name: "pavement-recline", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
+        Pose(
+            id: "builtin-cool-pavement-recline",
+            name: "pavement-recline",
+            vibe: "cool",
+            framing: ["hidden-face"],
+            cropCenter: CGPoint(x: 0.5, y: 0.55),
+            isPremium: true
+        ),
         Pose(id: "builtin-cool-night-lookback", name: "night-lookback", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.58)),
-        Pose(id: "builtin-cool-vending-machine", name: "vending-machine", vibe: "cool"),
+        Pose(id: "builtin-cool-vending-machine", name: "vending-machine", vibe: "cool", isPremium: true),
         Pose(id: "builtin-cool-scooter-lean", name: "scooter-lean", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.58)),
         Pose(id: "builtin-cute-railing-leg-pop", name: "railing-leg-pop", vibe: "cute"),
         Pose(id: "builtin-cute-steps-chin-rest", name: "steps-chin-rest", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        Pose(id: "builtin-cute-rainy-umbrella-crouch", name: "rainy-umbrella-crouch", vibe: "cute"),
+        Pose(id: "builtin-cute-rainy-umbrella-crouch", name: "rainy-umbrella-crouch", vibe: "cute", framing: ["overhead"], isPremium: true),
         Pose(id: "builtin-cute-sidewalk-hand-on-hip", name: "sidewalk-hand-on-hip", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        Pose(id: "builtin-cute-doorstep-sit", name: "doorstep-sit", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.58)),
-        Pose(id: "builtin-silly-cat-claw", name: "cat-claw", vibe: "silly"),
-        Pose(id: "builtin-silly-reach-for-camera", name: "reach-for-camera", vibe: "silly", cropCenter: CGPoint(x: 0.5, y: 0.58)),
+        Pose(id: "builtin-cute-doorstep-sit", name: "doorstep-sit", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.58)),
+        Pose(id: "builtin-silly-cat-claw", name: "cat-claw", vibe: "silly", framing: ["overhead"]),
+        Pose(
+            id: "builtin-silly-reach-for-camera",
+            name: "reach-for-camera",
+            vibe: "silly",
+            cropCenter: CGPoint(x: 0.5, y: 0.58),
+            isPremium: true
+        ),
 
         // Solo poses
         optimizedPose("camera-recline", genders: ["m"], vibe: "cool"),
         optimizedPose("cross-legged-park", genders: ["m"], vibe: "cool"),
-        optimizedPose("waterside-lookback", genders: ["m"], vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        optimizedPose("city-bench", genders: ["m"], vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        optimizedPose("shaded-curb-sit", genders: ["m"], vibe: "cool"),
-        optimizedPose("cafe-crate-sit", vibe: "cute"),
+        optimizedPose("waterside-lookback", genders: ["m"], vibe: "cool", framing: ["hidden-face"], cropCenter: CGPoint(x: 0.5, y: 0.55)),
+        premiumPose("city-bench", genders: ["m"], vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.55)),
+        premiumPose("shaded-curb-sit", genders: ["m"], vibe: "cool", framing: ["hidden-face", "overhead"]),
+        optimizedPose("cafe-crate-sit", vibe: "cute", framing: ["overhead"]),
         optimizedPose("overhead-crouch", vibe: "cute", framing: ["overhead"]),
-        optimizedPose("crosswalk-lean", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.58)),
-        optimizedPose("sunny-curb-sit", vibe: "cute"),
-        optimizedPose("railing-stretch", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.60)),
+        premiumPose("crosswalk-lean", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.58)),
+        premiumPose("sunny-curb-sit", vibe: "cute"),
+        premiumPose("railing-stretch", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.60)),
         optimizedPose("cafe-wall-leg-up", vibe: "cool"),
         optimizedPose("cafe-chair-lean", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        optimizedPose("grass-leg-kick", vibe: "cute"),
-        optimizedPose("night-overhead-recline", vibe: "dramatic", framing: ["overhead"]),
+        premiumPose("grass-leg-kick", vibe: "cute"),
+        optimizedPose("night-overhead-recline", vibe: "cool", framing: ["overhead"]),
         optimizedPose("sunglasses-adjust", vibe: "cool"),
         optimizedPose("street-heart-hands", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.55)),
-        optimizedPose("game-over-stairs", vibe: "dramatic"),
-        optimizedPose("drink-lookdown", vibe: "cool", framing: ["overhead"]),
-        optimizedPose("stone-ledge-sit", vibe: "cool"),
+        optimizedPose("game-over-stairs", vibe: "silly", framing: ["hidden-face"]),
+        premiumPose("drink-lookdown", vibe: "cool", framing: ["overhead"]),
+        optimizedPose("stone-ledge-sit", vibe: "cool", framing: ["hidden-face"]),
         optimizedPose("wall-portrait", vibe: "cute"),
-        optimizedPose("grass-face-cover", vibe: "dramatic", framing: ["overhead"]),
-        optimizedPose("wall-leg-cross", vibe: "cute"),
-        optimizedPose("hands-point-down", vibe: "cute", framing: ["overhead"], cropCenter: CGPoint(x: 0.5, y: 0.42)),
-        optimizedPose("finger-frame-perspective", vibe: "silly", framing: ["illusion"]),
-        optimizedPose("giant-drink-pour-solo", vibe: "silly", framing: ["illusion"]),
+        optimizedPose("grass-face-cover", vibe: "cute", framing: ["hidden-face", "overhead"]),
+        premiumPose("wall-leg-cross", vibe: "cute"),
+        premiumPose("hands-point-down", vibe: "cute", framing: ["overhead"], cropCenter: CGPoint(x: 0.5, y: 0.42)),
+        optimizedPose("finger-frame-perspective", vibe: "silly", framing: ["hidden-face", "illusion"]),
+        premiumPose("giant-drink-pour-solo", vibe: "silly", framing: ["illusion"]),
         optimizedPose("sunglasses-selfie", vibe: "cool", framing: ["selfie", "overhead"]),
-        optimizedPose("phone-show-selfie", vibe: "silly", framing: ["selfie"]),
+        optimizedPose("phone-show-selfie", vibe: "cute", framing: ["selfie"]),
         optimizedPose("mirror-phone-selfie", vibe: "cool", framing: ["selfie"]),
-        optimizedPose("crouch-selfie", vibe: "cute", framing: ["selfie", "overhead"]),
-        optimizedPose("drink-selfie", vibe: "cool", framing: ["selfie", "overhead"]),
-        optimizedPose("outfit-selfie", vibe: "cool", framing: ["selfie", "overhead"]),
-        optimizedPose("dress-selfie", vibe: "cute", framing: ["selfie", "overhead"]),
-        optimizedPose("seated-street-selfie", vibe: "cool", framing: ["selfie"]),
+        optimizedPose("crouch-selfie", vibe: "cute", framing: ["selfie"]),
+        premiumPose("drink-selfie", vibe: "cool", framing: ["selfie", "overhead"]),
+        optimizedPose("outfit-selfie", vibe: "cool", framing: ["hidden-face", "overhead", "selfie"]),
+        premiumPose("dress-selfie", vibe: "cute", framing: ["selfie", "overhead"]),
+        optimizedPose("seated-street-selfie", vibe: "cute", framing: ["selfie"]),
+
+        // Solo poses, second drop. Mostly premium: solo/cool and solo/cute are
+        // the two buckets the free tier already covers most heavily, so new
+        // work there deepens the paid collection rather than the free one.
+
+        premiumPose(
+            "night-street-crouch",
+            genders: ["m"],
+            vibe: "cool",
+            framing: ["overhead"],
+            cropCenter: CGPoint(x: 0.5, y: 0.54)
+        ),
+        optimizedPose("night-railing-city", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.52)),
+        premiumPose("shop-window-selfie", vibe: "cute", framing: ["selfie"], cropCenter: CGPoint(x: 0.5, y: 0.52)),
+        premiumPose("corner-walk-bag", vibe: "cool", framing: ["hidden-face"], cropCenter: CGPoint(x: 0.5, y: 0.55)),
+        optimizedPose("stairs-head-back", genders: ["m"], vibe: "cool", framing: ["overhead"], cropCenter: CGPoint(x: 0.5, y: 0.62)),
+        premiumPose("lamppost-leg-up", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.53)),
+        premiumPose("headphones-walk-away", vibe: "cool", framing: ["hidden-face"], cropCenter: CGPoint(x: 0.5, y: 0.52)),
+        premiumPose("curb-hands-face", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.58)),
+        premiumPose("wall-lean-lookback", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.49)),
+        optimizedPose("pavement-sit-cap", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.60)),
+        premiumPose(
+            "arm-out-overhead-selfie",
+            vibe: "cute",
+            framing: ["selfie", "overhead"],
+            cropCenter: CGPoint(x: 0.5, y: 0.44)
+        ),
+        optimizedPose("night-finger-frame", genders: ["m"], vibe: "silly", cropCenter: CGPoint(x: 0.5, y: 0.48)),
+        premiumPose("hand-to-lens-crouch", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.42)),
+        premiumPose("peace-sign-selfie", vibe: "cute", framing: ["selfie"], cropCenter: CGPoint(x: 0.5, y: 0.40)),
+        premiumPose("railing-lean-soft", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.62)),
+        premiumPose(
+            "hand-to-head-selfie",
+            vibe: "cute",
+            framing: ["selfie", "overhead"],
+            cropCenter: CGPoint(x: 0.5, y: 0.45)
+        ),
+        optimizedPose("top-down-stand", genders: ["m"], vibe: "cool", framing: ["overhead"], cropCenter: CGPoint(x: 0.5, y: 0.55)),
+        premiumPose("arms-up-peace", genders: ["m"], vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.52)),
+        premiumPose("stoop-hair-touch", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.60)),
+        optimizedPose("giant-hand-drink", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.48)),
+        premiumPose("ledge-leg-lift", vibe: "cute"),
+        premiumPose("wall-photo-back", vibe: "cute", framing: ["hidden-face"], cropCenter: CGPoint(x: 0.5, y: 0.60)),
+        premiumPose("wall-lean-arm-up", vibe: "cool", cropCenter: CGPoint(x: 0.5, y: 0.49)),
+        premiumPose("hand-reach-shades", vibe: "cool", framing: ["illusion"], cropCenter: CGPoint(x: 0.5, y: 0.48)),
+        premiumPose(
+            "glasses-overhead-selfie",
+            vibe: "cute",
+            framing: ["selfie", "overhead"],
+            cropCenter: CGPoint(x: 0.5, y: 0.48)
+        ),
+        premiumPose("both-hands-lens", genders: ["m"], vibe: "cool", framing: ["illusion"]),
 
         // Duo poses
         optimizedPose("cafe-drinks-duo", people: "duo", genders: ["m"], vibe: "cool"),
         optimizedPose("overhead-toast-duo", people: "duo", genders: ["m"], vibe: "cool", framing: ["overhead"]),
-        optimizedPose("street-steps-duo", people: "duo", genders: ["m"], vibe: "cool"),
-        optimizedPose("record-store-duo", people: "duo", genders: ["m"], vibe: "cool"),
-        optimizedPose("hooded-night-duo", people: "duo", vibe: "cool", framing: ["overhead"]),
-        optimizedPose("cat-cafe-selfie", people: "duo", vibe: "cool", framing: ["selfie"]),
-        optimizedPose("crosswalk-overhead-duo", people: "duo", vibe: "cool", framing: ["selfie", "overhead"]),
-        optimizedPose("cafe-steps-duo", people: "duo", vibe: "cool"),
-        optimizedPose("hand-heart-frame-duo", people: "duo", vibe: "cute"),
+        premiumPose("street-steps-duo", people: "duo", genders: ["m"], vibe: "cool"),
+        premiumPose("record-store-duo", people: "duo", genders: ["m"], vibe: "cool"),
+        optimizedPose("hooded-night-duo", people: "duo", vibe: "cool", framing: ["hidden-face", "overhead"]),
+        premiumPose("cat-cafe-selfie", people: "duo", vibe: "cool", framing: ["selfie"]),
+        premiumPose("crosswalk-overhead-duo", people: "duo", vibe: "cool", framing: ["hidden-face", "overhead", "selfie"]),
+        premiumPose("cafe-steps-duo", people: "duo", vibe: "cool"),
+        optimizedPose("hand-heart-frame-duo", people: "duo", vibe: "cute", framing: ["hidden-face"]),
         optimizedPose("seated-heart-duo", people: "duo", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.45)),
-        optimizedPose("table-heart-duo", people: "duo", vibe: "cute"),
+        optimizedPose("table-heart-duo", people: "duo", vibe: "cute", framing: ["hidden-face"]),
         optimizedPose("giant-tiny-split", people: "duo", vibe: "silly", framing: ["illusion"]),
-        optimizedPose("giant-drink-pour-duo", people: "duo", vibe: "silly", framing: ["illusion"]),
+        premiumPose("giant-drink-pour-duo", people: "duo", vibe: "silly", framing: ["illusion"]),
         optimizedPose("palm-sized-friend", people: "duo", vibe: "silly", framing: ["illusion"]),
-        optimizedPose("peace-sign-duo-selfie", people: "duo", genders: ["f", "m"], vibe: "silly", framing: ["selfie", "overhead"]),
+        optimizedPose("peace-sign-duo-selfie", people: "duo", genders: ["f", "m"], vibe: "silly", framing: ["selfie"]),
         optimizedPose(
             "sunset-hug-selfie",
             people: "duo",
@@ -242,17 +355,11 @@ enum BundledPoseCatalog {
             framing: ["selfie"],
             cropCenter: CGPoint(x: 0.5, y: 0.30)
         ),
-        optimizedPose("arm-over-shoulder-duo", people: "duo", genders: ["f", "m"], vibe: "cool"),
+        premiumPose("arm-over-shoulder-duo", people: "duo", genders: ["f", "m"], vibe: "cool"),
         optimizedPose("recline-selfie-duo", people: "duo", genders: ["f", "m"], vibe: "silly", framing: ["selfie", "overhead"]),
-        optimizedPose(
-            "puppy-recline-duo",
-            people: "duo",
-            vibe: "cute",
-            framing: ["overhead"],
-            extras: ["pet"]
-        ),
+        optimizedPose("puppy-recline-duo", people: "duo", vibe: "cute", extras: ["pet"]),
         optimizedPose("matching-step-duo", people: "duo", genders: ["f", "m"], vibe: "cool"),
-        optimizedPose(
+        premiumPose(
             "peekaboo-duo-selfie",
             people: "duo",
             genders: ["f", "m"],
@@ -265,31 +372,65 @@ enum BundledPoseCatalog {
             people: "duo",
             genders: ["f", "m"],
             vibe: "cute",
-            framing: ["selfie", "overhead"],
+            framing: ["overhead", "selfie"],
             cropCenter: CGPoint(x: 0.5, y: 0.45)
         ),
 
+        // Duo poses, second drop. Free: duo trails solo badly in the free tier,
+        // and the illusion pair below is the free tier's thinnest framing.
+
+        optimizedPose(
+            "night-duo-selfie",
+            people: "duo",
+            genders: ["m"],
+            vibe: "cool",
+            framing: ["hidden-face", "overhead", "selfie"],
+            cropCenter: CGPoint(x: 0.5, y: 0.48)
+        ),
+        optimizedPose("duo-heart-hands-night", people: "duo", genders: ["m"], vibe: "cute"),
+        optimizedPose("giant-hand-friend-down", people: "duo", genders: ["m"], vibe: "silly", framing: ["illusion"]),
+
         // Group poses
-        optimizedPose("friends-cheer", people: "group", vibe: "cute"),
+        premiumPose("friends-cheer", people: "group", vibe: "cute"),
         optimizedPose("trio-heart-selfie", people: "group", vibe: "cute", framing: ["selfie"]),
-        optimizedPose("four-friends-table", people: "group", vibe: "cute", cropCenter: CGPoint(x: 0.5, y: 0.45)),
-        optimizedPose("flower-heart-circle", people: "group", vibe: "cute"),
+        optimizedPose("four-friends-table", people: "group", vibe: "silly", cropCenter: CGPoint(x: 0.5, y: 0.45)),
+        premiumPose("flower-heart-circle", people: "group", vibe: "cute"),
         optimizedPose("trio-heart-line", people: "group", vibe: "cute"),
         optimizedPose("trio-street-lean", people: "group", vibe: "cool"),
-        optimizedPose("friendship-circle", people: "group", vibe: "cute", framing: ["overhead"]),
+        optimizedPose("friendship-circle", people: "group", vibe: "cute", framing: ["overhead", "selfie"]),
         optimizedPose(
             "party-photobomb",
             people: "group",
             genders: ["f", "m"],
-            vibe: "dramatic",
+            vibe: "silly",
             framing: ["selfie"],
             cropCenter: CGPoint(x: 0.5, y: 0.36)
         ),
-        optimizedPose("four-friend-heart", people: "group", vibe: "cute")
+        premiumPose("four-friend-heart", people: "group", vibe: "cute"),
+
+        // Group poses, second drop. Both free: group is the smallest people
+        // bucket in the free tier, and group/cool had exactly one free pose.
+        optimizedPose(
+            "friends-stairs-selfie",
+            people: "group",
+            genders: ["m"],
+            vibe: "cool",
+            framing: ["selfie"],
+            cropCenter: CGPoint(x: 0.5, y: 0.46)
+        ),
+        optimizedPose(
+            "friends-lying-circle",
+            people: "group",
+            genders: ["m"],
+            vibe: "cool",
+            framing: ["overhead", "selfie"],
+            cropCenter: CGPoint(x: 0.5, y: 0.42)
+        )
     ]
 
     @MainActor
     static func seedIfNeeded(in modelContext: ModelContext) async {
+        assertStarterFavoritesAreFree()
         let defaults = UserDefaults.standard
 
         // Version 0 means the catalog has never been seeded on this device,
