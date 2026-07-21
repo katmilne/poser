@@ -29,7 +29,6 @@ struct CameraView: View {
     @State private var referenceStripCollapsed = false
     @State private var paywallContext: PaywallContext?
     @State private var pinchStartZoom: CGFloat?
-    @State private var pinchStartZoomOut: CGFloat?
     /// 0 = the feed fills the whole screen (1×); 1 = it has shrunk to the 3:4
     /// capture rect, with the cloud backdrop showing in the exposed area.
     @State private var viewfinderZoomOut: CGFloat = 0
@@ -276,33 +275,22 @@ struct CameraView: View {
     private var cameraZoomGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                let mag = value.magnification
+                // Pinch owns the optical range only, from the widest lens filling
+                // the screen (0.7×) upward. The pulled-back state - the feed shrunk
+                // to the capture rect with the cloud backdrop around it (0.5×) - is
+                // reachable *only* from the zoom buttons/slider: its glass controls
+                // sit over the live feed's edge and Liquid Glass flickers while
+                // sampling it, so a pinch must never drift into or out of it. The
+                // `viewfinderZoomOut == 0` guard keeps pinch out of that state (and
+                // the 0.5×→0.7× exit button-only), and `setZoom` clamps at the
+                // widest lens, so pinching further out simply holds at 0.7×.
+                guard camera.supportsZoom, viewfinderZoomOut == 0 else { return }
                 if pinchStartZoom == nil { pinchStartZoom = camera.zoomFactor }
-                if pinchStartZoomOut == nil { pinchStartZoomOut = viewfinderZoomOut }
                 let startZoom = pinchStartZoom ?? camera.zoomFactor
-                let startOut = pinchStartZoomOut ?? viewfinderZoomOut
-
-                // Below the lens's own minimum there is nothing left to zoom out
-                // optically, so pinching in there digitally shrinks the feed
-                // (the cloud backdrop fills the gap) instead of doing nothing. Pinching
-                // back out unwinds that before the lens takes over again.
-                if startOut > 0 || (mag < 1 && startZoom <= camera.minimumZoomFactor + 0.001) {
-                    // Gain of 2.5 so a comfortable pinch spans the whole 0…1
-                    // range in one gesture - without it, spreading the fingers
-                    // back out could never fully return to the full-screen camera.
-                    // (Optical zoom-in from here takes a fresh pinch once this
-                    // one has settled back to the full screen.)
-                    viewfinderZoomOut = max(0, min(1, startOut + (1 - mag) * 2.5))
-                } else if camera.supportsZoom {
-                    camera.setZoom(startZoom * mag)
-                }
+                camera.setZoom(startZoom * value.magnification)
             }
             .onEnded { _ in
-                // Snap away any sliver of letterbox so the camera always settles
-                // back to a clean full screen.
-                if viewfinderZoomOut < 0.02 { viewfinderZoomOut = 0 }
                 pinchStartZoom = nil
-                pinchStartZoomOut = nil
             }
     }
 
